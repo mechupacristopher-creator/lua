@@ -649,9 +649,9 @@ end
 local nextMelee = 0
 local function melee(m)
 	if not hp(m) or os.clock() < nextMelee then return end
-	nextMelee = os.clock() + 0.3
+	nextMelee = os.clock() + 0.12
 	pcall(Network.FireServer, Network, "Combat")
-	task.delay(0.12, function()
+	task.delay(0.06, function()
 		if hp(m) then pcall(Network.FireServer, Network, "Combat", "Hit", m, m:GetPivot().Position) end
 	end)
 end
@@ -664,7 +664,7 @@ task.spawn(function()
 			if S.pumpkin then
 				S.hold, S.attack, S.ranged = nil, nil, nil
 				melee(target)
-				S.status = "Pumpkins: " .. (target and target.Name or "searching...")
+				S.status = "Pumpkins: " .. (target and target.Name or "none left, waiting for respawns")
 			elseif anyOn() then
 				local ok, err = pcall(farmStep, char, root)
 				if not ok then S.status = "Error: " .. tostring(err) S.attack, S.ranged = nil, nil end
@@ -910,6 +910,36 @@ home.Paragraph(function()
 	for _, x in ipairs(WORLDS) do if x.place == game.PlaceId then w = x.name end end
 	return ("<b><font color=\"#ffffff\">%s</font></b>\n\n%s\n\nCap: %s  |  Zenkai: %d  |  World: %s")
 		:format(S.status, table.concat(parts, "\n"), fmt(c), zenkai(), w or "?")
+end)
+home.Section("Spawned")
+-- bosses worth knowing about (weekly boss list + event bosses)
+local WATCH = { "Goku", "Carl", "Brola", "Piccolo", "Beast", "Guz", "Maz", "Janemba", "Gogeta", "Garuri", "Fluffy Knight",
+	"Corruptkin", "Corruptkin Ablaze", "Pumpkin Monstrosity", "Reaper", "Pumpkin Creature" }
+home.Paragraph(function()
+	local map, lines = workspace:FindFirstChild("Map"), {}
+	if not map then return "Map not loaded" end
+	local balls = {}
+	for _, m in ipairs(map:GetChildren()) do
+		local n = m:GetAttribute("BallNum")
+		if n then table.insert(balls, n) end
+	end
+	table.sort(balls)
+	table.insert(lines, #balls > 0 and ("<font color=\"#ffb000\">Dragon Balls: %s</font>"):format(table.concat(balls, ", ")) or "Dragon Balls: none")
+	local npcs = map:FindFirstChild("NPCs")
+	for _, name in ipairs(WATCH) do
+		for _, m in ipairs(npcs and npcs:GetChildren() or {}) do
+			if m.Name == name and hp(m) then
+				local h = m:GetAttribute("Health") or (m:FindFirstChildOfClass("Humanoid") and m:FindFirstChildOfClass("Humanoid").Health) or 0
+				local hs = h >= 1e6 and fmt(h) or ("%.0fk"):format(h / 1e3)
+				table.insert(lines, ("<font color=\"#ff5050\">%s</font>  %s HP"):format(name, hs))
+			end
+		end
+	end
+	local pumpkins = 0
+	local pf = map:FindFirstChild("Pumpkin")
+	for _, m in ipairs(pf and pf:GetChildren() or {}) do if hp(m) then pumpkins += 1 end end
+	table.insert(lines, "Pumpkins: " .. pumpkins)
+	return table.concat(lines, "\n")
 end)
 home.Section("Info")
 home.Paragraph(function() return "Toggle the UI with <b>RightControl</b> or the minimize button.\nSettings are saved and the script reloads itself after teleports." end)
