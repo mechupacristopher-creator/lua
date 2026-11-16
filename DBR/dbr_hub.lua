@@ -65,7 +65,7 @@ local function saveCfg() pcall(writefile, CFG_FILE, Http:JSONEncode(cfg)) end
 local function safeHold() if cfg.safe and game.PlaceId ~= EARTH then return SAFE_CF end end
 
 if G.DBRFarmToken ~= TOKEN then return end -- a newer copy started while this one was loading
-local S = { pumpkin = false, conns = {}, status = "Idle", fast = false, charging = false }
+local S = { pumpkin = false, conns = {}, status = "Idle", fast = false, charging = false, loadedAt = os.clock() }
 G.DBRFarm = S
 local function alive() return G.DBRFarm == S end
 local function stat(n) local v = Stats:FindFirstChild(n) return v and v.Value or 0 end
@@ -561,6 +561,12 @@ local function farmStep(char, root)
 			end
 			S.status = label .. ": grabbing ball " .. tostring(ball:GetAttribute("BallNum"))
 		else
+			-- wait after arriving: lets the balls load and gives time to switch the finder off before the next hop
+			local left = 10 - (os.clock() - S.loadedAt)
+			if left > 0 then
+				S.status = ("%s: none here, hopping in %ds (turn off Dragon Ball Finder to stop)"):format(label, math.ceil(left))
+				return
+			end
 			S.status = label .. ": hopping server"
 			travel(EARTH, true)
 		end
@@ -674,11 +680,10 @@ task.spawn(function()
 end)
 
 -- auto hop: on a crowded Earth server (> 6 players) with Prefer Small Servers on and stat farming off
-local loadedAt = os.clock()
 task.spawn(function()
 	while alive() do
 		task.wait(5)
-		if cfg.small and not cfg.farm and game.PlaceId == EARTH and #Players:GetPlayers() > 6 and os.clock() - loadedAt > 20 then
+		if cfg.small and not cfg.farm and game.PlaceId == EARTH and #Players:GetPlayers() > 6 and os.clock() - S.loadedAt > 20 then
 			local best = smallestEarthServer()
 			if best and (best:GetAttribute("plrCount") or 99) <= 3 then
 				S.status = ("Hopping to a small server (%d players)"):format(best:GetAttribute("plrCount"))
