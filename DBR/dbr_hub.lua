@@ -88,8 +88,9 @@ local function travel(place, otherServer)
 	lastTp = os.clock()
 	queueReload()
 	local best
-	-- picking a specific server only works from Earth; from the reserved training worlds it gives "restricted area"
-	if cfg.small and game.PlaceId == EARTH then
+	-- picking a specific server only works for Earth servers; for the reserved training worlds it gives
+	-- "restricted area", so it is never used while stat farming
+	if cfg.small and not cfg.farm and place == EARTH then
 		local root = RS:FindFirstChild("_servers")
 		local list = root and root:FindFirstChild(tostring(place))
 		local mine = root and root:GetAttribute("code")
@@ -879,7 +880,7 @@ cfgToggle(farming, "Auto Transform", "transform")
 farming.Section("World")
 cfgToggle(farming, "Teleport to Best World", "world")
 cfgToggle(farming, "Safe Farm (sky)", "safe")
-cfgToggle(farming, "Prefer Small Servers", "small")
+cfgToggle(farming, "Prefer Small Servers (Earth only)", "small")
 
 -- Quests
 local quests = Tab("Quests", "☰")
