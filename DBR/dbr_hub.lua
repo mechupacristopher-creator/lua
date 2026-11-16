@@ -88,7 +88,8 @@ local function travel(place, otherServer)
 	lastTp = os.clock()
 	queueReload()
 	local best
-	if cfg.small then
+	-- picking a specific server only works from Earth; from the reserved training worlds it gives "restricted area"
+	if cfg.small and game.PlaceId == EARTH then
 		local root = RS:FindFirstChild("_servers")
 		local list = root and root:FindFirstChild(tostring(place))
 		local mine = root and root:GetAttribute("code")
