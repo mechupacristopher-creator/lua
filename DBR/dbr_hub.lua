@@ -82,24 +82,34 @@ local function queueReload()
 	pcall(queue_on_teleport, src)
 end
 
--- Earth only: the emptiest other Earth server (TeleportToServer fails for the reserved worlds)
+-- Earth only: the emptiest other Earth server (TeleportToServer fails for the reserved worlds).
+-- 0-player entries are dead/closing servers and fail with "restricted" (773); servers that failed are skipped.
+local badServers, lastHop = {}, nil
 local function smallestEarthServer()
 	local root = RS:FindFirstChild("_servers")
 	local list = root and root:FindFirstChild(tostring(EARTH))
 	local mine, best = root and root:GetAttribute("code"), nil
 	for _, sv in ipairs(list and list:GetChildren() or {}) do
+		local n = sv:GetAttribute("plrCount") or 0
 		local same = sv.Name == game.JobId or (mine and sv:GetAttribute("code") == mine)
-		if not same and (not best or (sv:GetAttribute("plrCount") or 99) < (best:GetAttribute("plrCount") or 99)) then best = sv end
+		if not same and n >= 1 and not badServers[sv.Name] and (not best or n < (best:GetAttribute("plrCount") or 99)) then best = sv end
 	end
 	return best
 end
 local function hopSmallest()
 	local best = game.PlaceId == EARTH and smallestEarthServer()
 	if not best then return false end
+	lastHop = best.Name
 	queueReload()
 	task.spawn(pcall, Network.InvokeServer, Network, "TeleportToServer", EARTH, best.Name)
 	return true
 end
+table.insert(S.conns, TeleportService.TeleportInitFailed:Connect(function(plr)
+	if plr ~= LP or not lastHop then return end
+	badServers[lastHop], lastHop = true, nil
+	task.wait(3)
+	if alive() then hopSmallest() end -- try the next smallest one
+end))
 
 local lastTp = 0
 local function travel(place, otherServer)
@@ -275,9 +285,13 @@ end))
 pcall(function()
 	table.insert(S.conns, GuiService.ErrorMessageChanged:Connect(function()
 		if not (cfg.reconnect and anyOn()) then return end
-		local msg = (GuiService:GetErrorMessage() or ""):lower()
-		-- a failed teleport is not a disconnect: travel() retries it by itself
-		if msg == "" or msg:find("teleport") then return end
+		local okm, m = pcall(function()
+			if setthreadidentity then setthreadidentity(8) end -- GetErrorMessage needs RobloxScript capability
+			return GuiService:GetErrorMessage()
+		end)
+		local msg = okm and tostring(m or ""):lower() or ""
+		-- a failed teleport is not a disconnect: travel()/hop retry it by themselves
+		if (okm and msg == "") or msg:find("teleport") then return end
 		task.wait(2)
 		queueReload()
 		-- rejoin Earth (public); reserved worlds can't be joined directly. The farm travels back afterwards.
