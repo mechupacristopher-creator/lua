@@ -101,8 +101,9 @@ local function travel(place, otherServer)
 	task.spawn(function()
 		if best then
 			pcall(Network.InvokeServer, Network, "TeleportToServer", place, best.Name)
-		elseif otherServer or place == game.PlaceId then
-			pcall(TeleportService.Teleport, TeleportService, place)
+		elseif place == EARTH and (otherServer or place == game.PlaceId) then
+			-- only Earth is public: the training worlds are reserved and a direct Teleport gives "restricted area"
+			pcall(TeleportService.Teleport, TeleportService, EARTH)
 		else
 			pcall(Network.InvokeServer, Network, "TeleportToWorld", place)
 		end
@@ -263,9 +264,13 @@ end))
 pcall(function()
 	table.insert(S.conns, GuiService.ErrorMessageChanged:Connect(function()
 		if not (cfg.reconnect and anyOn()) then return end
+		local msg = (GuiService:GetErrorMessage() or ""):lower()
+		-- a failed teleport is not a disconnect: travel() retries it by itself
+		if msg == "" or msg:find("teleport") then return end
 		task.wait(2)
 		queueReload()
-		pcall(TeleportService.Teleport, TeleportService, game.PlaceId)
+		-- rejoin Earth (public); reserved worlds can't be joined directly. The farm travels back afterwards.
+		pcall(TeleportService.Teleport, TeleportService, EARTH)
 	end))
 end)
 
