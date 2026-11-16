@@ -82,24 +82,33 @@ local function queueReload()
 	pcall(queue_on_teleport, src)
 end
 
+-- Earth only: the emptiest other Earth server (TeleportToServer fails for the reserved worlds)
+local function smallestEarthServer()
+	local root = RS:FindFirstChild("_servers")
+	local list = root and root:FindFirstChild(tostring(EARTH))
+	local mine, best = root and root:GetAttribute("code"), nil
+	for _, sv in ipairs(list and list:GetChildren() or {}) do
+		local same = sv.Name == game.JobId or (mine and sv:GetAttribute("code") == mine)
+		if not same and (not best or (sv:GetAttribute("plrCount") or 99) < (best:GetAttribute("plrCount") or 99)) then best = sv end
+	end
+	return best
+end
+local function hopSmallest()
+	local best = game.PlaceId == EARTH and smallestEarthServer()
+	if not best then return false end
+	queueReload()
+	task.spawn(pcall, Network.InvokeServer, Network, "TeleportToServer", EARTH, best.Name)
+	return true
+end
+
 local lastTp = 0
 local function travel(place, otherServer)
 	if os.clock() - lastTp < 20 then return end
 	lastTp = os.clock()
 	queueReload()
-	local best
 	-- picking a specific server only works for Earth servers; for the reserved training worlds it gives
 	-- "restricted area", so it is never used while stat farming
-	if cfg.small and not cfg.farm and place == EARTH then
-		local root = RS:FindFirstChild("_servers")
-		local list = root and root:FindFirstChild(tostring(place))
-		local mine = root and root:GetAttribute("code")
-		for _, sv in ipairs(list and list:GetChildren() or {}) do
-			local n = sv:GetAttribute("plrCount") or 99
-			local same = sv.Name == game.JobId or (mine and sv:GetAttribute("code") == mine)
-			if not same and (not best or n < (best:GetAttribute("plrCount") or 99)) then best = sv end
-		end
-	end
+	local best = cfg.small and not cfg.farm and place == EARTH and smallestEarthServer() or nil
 	task.spawn(function()
 		if best then
 			pcall(Network.InvokeServer, Network, "TeleportToServer", place, best.Name)
@@ -650,6 +659,22 @@ task.spawn(function()
 	end
 end)
 
+-- auto hop: on a crowded Earth server (> 6 players) with Prefer Small Servers on and stat farming off
+local loadedAt = os.clock()
+task.spawn(function()
+	while alive() do
+		task.wait(5)
+		if cfg.small and not cfg.farm and game.PlaceId == EARTH and #Players:GetPlayers() > 6 and os.clock() - loadedAt > 20 then
+			local best = smallestEarthServer()
+			if best and (best:GetAttribute("plrCount") or 99) <= 3 then
+				S.status = ("Hopping to a small server (%d players)"):format(best:GetAttribute("plrCount"))
+				hopSmallest()
+				task.wait(60) -- give the teleport time; if it fails, try again later
+			end
+		end
+	end
+end)
+
 --[[ ===================== UI ===================== ]]
 local C = {
 	bg = Color3.fromRGB(16, 16, 16), side = Color3.fromRGB(20, 20, 20), item = Color3.fromRGB(30, 30, 30),
@@ -913,6 +938,8 @@ local misc = Tab("Misc", "⚙")
 misc.Section("Misc")
 cfgToggle(misc, "Anti-AFK", "antiAfk")
 cfgToggle(misc, "Auto Reconnect", "reconnect")
+misc.Section("Server")
+misc.Button("Hop to Smallest Server (Earth)", function() if not hopSmallest() then S.status = "Server hop only works on Earth" end end)
 misc.Button("Unload Script", function() S.Unload() end)
 
 selectTab(tabs[1])
