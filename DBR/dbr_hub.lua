@@ -25,6 +25,7 @@ local TeleportService = game:GetService("TeleportService")
 local GuiService = game:GetService("GuiService")
 local UIS = game:GetService("UserInputService")
 local VirtualUser = game:GetService("VirtualUser")
+local VIM = game:GetService("VirtualInputManager")
 local RS = game:GetService("ReplicatedStorage")
 local LP = Players.LocalPlayer
 local Stats = LP:WaitForChild("Stats")
@@ -334,7 +335,7 @@ local function fireSkill(key, how, root, targetPos)
 	end
 end
 
-local nextSkill, skillIdx, retreatSince = 0, 0, nil
+local nextSkill, skillIdx, retreatSince, nextLock = 0, 0, nil, 0
 -- each skill's Tool (Backpack or equipped) has Key and CooldownTime (server time it is ready again; -1 while in use)
 local function kiSkillTools()
 	local list = {}
@@ -379,6 +380,14 @@ local function rangedAttack(root, state, m, now, boss)
 			S.ranged = nil
 			S.hold = CFrame.new(m:GetPivot().Position + Vector3.new(150, 120, 150))
 			return ("retreating (%d%% HP)"):format(pct)
+		end
+		-- lock on (X) so the game aims beams at the boss; State.LockedTarget holds the locked part
+		local lt = state and state:FindFirstChild("LockedTarget")
+		local locked = lt and lt.Value and lt.Value:IsDescendantOf(m)
+		if not locked and now > nextLock then
+			nextLock = now + 2 -- one tap per 2s so it doesn't toggle off/on
+			pcall(VIM.SendKeyEvent, VIM, true, Enum.KeyCode.X, false, game)
+			task.delay(0.05, function() pcall(VIM.SendKeyEvent, VIM, false, Enum.KeyCode.X, false, game) end)
 		end
 		if cfg.skills then castNextSkill(now, root, m:GetPivot().Position) end
 	end
