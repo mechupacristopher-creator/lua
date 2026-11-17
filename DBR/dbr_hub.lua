@@ -25,7 +25,6 @@ local TeleportService = game:GetService("TeleportService")
 local GuiService = game:GetService("GuiService")
 local UIS = game:GetService("UserInputService")
 local VirtualUser = game:GetService("VirtualUser")
-local VIM = game:GetService("VirtualInputManager")
 local RS = game:GetService("ReplicatedStorage")
 local LP = Players.LocalPlayer
 local Stats = LP:WaitForChild("Stats")
@@ -38,6 +37,7 @@ local ScaleUtil = require(RS.Modules.Library.CharacterScaleUtils)
 local Quests = require(RS.Modules.Quests.Quests)
 local QuestData = require(RS.Modules.Quests.QuestDataHandler)
 local peek = require(RS.Modules.Library.Fusion).peek
+local EventBus = require(RS.Modules.Library.EventBus)
 if setthreadidentity then pcall(setthreadidentity, 8) end -- game requires drop the thread identity
 
 local EARTH, YARDRAT = 71315343, 1357512648
@@ -226,7 +226,8 @@ local function findNPC(names, from)
 		local ok = (names == "any" and m.Name ~= "Dummy") or (type(names) == "table" and names[m.Name])
 		if ok and hp(m) then
 			local d = (m:GetPivot().Position - from).Magnitude
-			if d < bd then best, bd = m, d end
+			-- shortcut: models >15k studs away are decoys (e.g. a 100 HP Janemba far outside Hell); raise if a real map is bigger
+			if d < bd and d < 15000 then best, bd = m, d end
 		end
 	end
 	return best
@@ -366,8 +367,18 @@ local function castNextSkill(now, root, targetPos)
 	end
 end
 
+-- every boss (weekly boss list + event bosses), used by "Kill Bosses While Farming" and the Spawned list
+local BOSS_NAMES = { "Gogeta", "Janemba", "Brola", "Piccolo", "Goku", "Carl", "Beast", "Guz", "Maz", "Garuri", "Fluffy Knight",
+	"Corruptkin", "Corruptkin Ablaze", "Pumpkin Monstrosity", "Reaper" }
+local BOSS_SET = {}
+for _, n in ipairs(BOSS_NAMES) do BOSS_SET[n] = true end
+
 -- ki blasts from range; against bosses also orbit, chain skills and retreat on low health
 local function rangedAttack(root, state, m, now, boss)
+	-- already locked onto another living boss: attack that one so the lock and the aim agree
+	local lt = boss and state and state:FindFirstChild("LockedTarget")
+	local lockedModel = lt and lt.Value and lt.Value.Parent
+	if lockedModel and lockedModel ~= m and BOSS_SET[lockedModel.Name] and hp(lockedModel) then m = lockedModel end
 	setFast(false)
 	S.hold, S.attack, S.ranged = nil, nil, m
 	S.rangedR, S.rangedBoss = boss and cfg.bossRange or 35, boss
@@ -381,13 +392,17 @@ local function rangedAttack(root, state, m, now, boss)
 			S.hold = CFrame.new(m:GetPivot().Position + Vector3.new(150, 120, 150))
 			return ("retreating (%d%% HP)"):format(pct)
 		end
-		-- lock on (X) so the game aims beams at the boss; State.LockedTarget holds the locked part
-		local lt = state and state:FindFirstChild("LockedTarget")
-		local locked = lt and lt.Value and lt.Value:IsDescendantOf(m)
-		if not locked and now > nextLock then
-			nextLock = now + 2 -- one tap per 2s so it doesn't toggle off/on
-			pcall(VIM.SendKeyEvent, VIM, true, Enum.KeyCode.X, false, game)
-			task.delay(0.05, function() pcall(VIM.SendKeyEvent, VIM, false, Enum.KeyCode.X, false, game) end)
+		-- lock on so the game aims at the boss: tell the input machine the exact target (what X does, minus
+		-- the toggle and the "must be on camera" check)
+		if now > nextLock then
+			nextLock = now + 1
+			pcall(function()
+				local machine = EventBus:Invoke("GetPlayerMachine")
+				local part = m:FindFirstChild("HumanoidRootPart") or m.PrimaryPart
+				if machine and part and not (machine.lockOnTarget and machine.lockOnTarget:IsDescendantOf(m)) then
+					machine:SetLockTarget(part, true)
+				end
+			end)
 		end
 		if cfg.skills then castNextSkill(now, root, m:GetPivot().Position) end
 	end
@@ -402,11 +417,6 @@ end
 -- ===== Halloween 2025 =====
 -- claims challenges, fights event bosses, lights lanterns and smashes pumpkins (on Earth)
 local HW_BOSSES = { Corruptkin = true, ["Corruptkin Ablaze"] = true, ["Pumpkin Monstrosity"] = true, Reaper = true }
--- every boss (weekly boss list + event bosses), used by "Kill Bosses While Farming" and the Spawned list
-local BOSS_NAMES = { "Gogeta", "Janemba", "Brola", "Piccolo", "Goku", "Carl", "Beast", "Guz", "Maz", "Garuri", "Fluffy Knight",
-	"Corruptkin", "Corruptkin Ablaze", "Pumpkin Monstrosity", "Reaper" }
-local BOSS_SET = {}
-for _, n in ipairs(BOSS_NAMES) do BOSS_SET[n] = true end
 local HW_KEYS = { "FindLanterns", "EventSkill", "FindShop", "DragonBallWish", "DailyRewards", "EarnExp", "DefeatEnemies", "DestroyPumpkins",
 	"BannerRolls", "LightLanterns", "EvilPumpkins", "Corruptkin", "HellsEmissary", "AllChallenges", "WeekendLanterns", "WeekendCorruptkin", "WeekendPumpkins", "HarvestKing" }
 local nextClaim, lampTries, lampSkip = 0, {}, {}
