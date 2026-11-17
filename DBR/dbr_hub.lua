@@ -114,8 +114,8 @@ local function freshEarthServer()
 	for _, sv in ipairs(list and list:GetChildren() or {}) do
 		local n = sv:GetAttribute("plrCount") or 0
 		local same = sv.Name == game.JobId or (mine and sv:GetAttribute("code") == mine)
-		-- 3+ players: near-empty servers are often closing and fail with 771 "server no longer available"
-		if not same and n >= 3 and not badServers[sv.Name] and not visited[sv.Name] then table.insert(pool, sv) end
+		-- 2+ players: near-empty servers are often closing and fail with 771 "server no longer available"
+		if not same and n >= 2 and not badServers[sv.Name] and not visited[sv.Name] then table.insert(pool, sv) end
 	end
 	if #pool == 0 then return nil end
 	table.sort(pool, function(a, b) return (a:GetAttribute("plrCount") or 99) < (b:GetAttribute("plrCount") or 99) end)
