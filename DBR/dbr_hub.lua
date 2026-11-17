@@ -85,7 +85,7 @@ end
 
 -- Earth only: the emptiest other Earth server (TeleportToServer fails for the reserved worlds).
 -- 0-player entries are dead/closing servers and fail with "restricted" (773); servers that failed are skipped.
-local badServers, lastHop = {}, nil
+local badServers, lastHop, lastTp = {}, nil, 0
 local function smallestEarthServer()
 	local root = RS:FindFirstChild("_servers")
 	local list = root and root:FindFirstChild(tostring(EARTH))
@@ -97,6 +97,31 @@ local function smallestEarthServer()
 	end
 	return best
 end
+-- servers already visited (saved, so it survives the reload after each hop); skipped for 30 min by Dragon Ball hops
+local VISITED_FILE = "dbr_visited.json"
+local visited = {}
+pcall(function() visited = Http:JSONDecode(readfile(VISITED_FILE)) end)
+if game.PlaceId == EARTH then
+	visited[game.JobId] = os.time()
+	for id, t in pairs(visited) do if os.time() - t > 1800 then visited[id] = nil end end
+	pcall(writefile, VISITED_FILE, Http:JSONEncode(visited))
+end
+-- a random one of the 5 smallest Earth servers you haven't been to recently
+local function freshEarthServer()
+	local root = RS:FindFirstChild("_servers")
+	local list = root and root:FindFirstChild(tostring(EARTH))
+	local mine, pool = root and root:GetAttribute("code"), {}
+	for _, sv in ipairs(list and list:GetChildren() or {}) do
+		local n = sv:GetAttribute("plrCount") or 0
+		local same = sv.Name == game.JobId or (mine and sv:GetAttribute("code") == mine)
+		-- 3+ players: near-empty servers are often closing and fail with 771 "server no longer available"
+		if not same and n >= 3 and not badServers[sv.Name] and not visited[sv.Name] then table.insert(pool, sv) end
+	end
+	if #pool == 0 then return nil end
+	table.sort(pool, function(a, b) return (a:GetAttribute("plrCount") or 99) < (b:GetAttribute("plrCount") or 99) end)
+	return pool[math.random(1, math.min(5, #pool))]
+end
+
 local function hopSmallest()
 	local best = game.PlaceId == EARTH and smallestEarthServer()
 	if not best then return false end
@@ -107,19 +132,29 @@ local function hopSmallest()
 end
 table.insert(S.conns, TeleportService.TeleportInitFailed:Connect(function(plr)
 	if plr ~= LP or not lastHop then return end
-	badServers[lastHop], lastHop = true, nil
+	badServers[lastHop], lastHop = true, nil -- e.g. 771 "server no longer available": the list was stale
 	task.wait(3)
-	if alive() then hopSmallest() end -- try the next smallest one
+	if not alive() then return end
+	if cfg.dragon then
+		lastTp = 0 -- let the Dragon Ball finder hop again right away (it picks another unvisited server)
+	else
+		hopSmallest() -- try the next smallest one
+	end
 end))
 
-local lastTp = 0
 local function travel(place, otherServer)
 	if os.clock() - lastTp < 20 then return end
 	lastTp = os.clock()
 	queueReload()
 	-- picking a specific server only works for Earth servers; for the reserved training worlds it gives
 	-- "restricted area", so it is never used while stat farming
-	local best = cfg.small and not cfg.farm and place == EARTH and smallestEarthServer() or nil
+	local best
+	if otherServer and place == EARTH and game.PlaceId == EARTH then
+		best = freshEarthServer() -- Dragon Ball hop: a new server, never one we just checked
+		lastHop = best and best.Name
+	elseif cfg.small and not cfg.farm and place == EARTH then
+		best = smallestEarthServer()
+	end
 	task.spawn(function()
 		if best then
 			pcall(Network.InvokeServer, Network, "TeleportToServer", place, best.Name)
