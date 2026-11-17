@@ -1,5 +1,5 @@
 --[[
-	DBR Hub - Dragon Ball Rage
+	Eze Hub - Dragon Ball Rage
 	Stat farm (optimal world, safe farm, auto Zenkai, auto transform), auto quests,
 	Halloween event (lanterns, Corruptkin, pumpkins), Dragon Ball finder.
 	Re-running unloads the previous copy. After a world teleport it reloads itself.
@@ -710,8 +710,8 @@ local function corner(o, r) new("UICorner", { CornerRadius = UDim.new(0, r or 8)
 
 local guiParent = (gethui and gethui()) or game:GetService("CoreGui")
 -- remove panels left behind by older copies (e.g. the old double load)
-for _, o in ipairs(guiParent:GetChildren()) do if o.Name == "DBRFarm" or o.Name == "DBRHub" then o:Destroy() end end
-local gui = new("ScreenGui", { Name = "DBRHub", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, guiParent)
+for _, o in ipairs(guiParent:GetChildren()) do if o.Name == "DBRFarm" or o.Name == "DBRHub" or o.Name == "EzeHub" then o:Destroy() end end
+local gui = new("ScreenGui", { Name = "EzeHub", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, guiParent)
 S.gui = gui
 
 local win = new("Frame", { Size = UDim2.fromOffset(640, 420), Position = UDim2.new(0.5, -320, 0.5, -210), BackgroundColor3 = C.bg }, gui)
@@ -721,7 +721,7 @@ new("UIStroke", { Color = Color3.fromRGB(45, 45, 45) }, win)
 -- title bar (drag handle)
 local top = new("Frame", { Size = UDim2.new(1, 0, 0, 44), BackgroundTransparency = 1 }, win)
 new("TextLabel", {
-	Text = "DBR Hub | Version: " .. VERSION, Font = Enum.Font.GothamMedium, TextSize = 16, TextColor3 = C.text,
+	Text = "Eze Hub | Version: " .. VERSION, Font = Enum.Font.GothamMedium, TextSize = 16, TextColor3 = C.text,
 	BackgroundTransparency = 1, Position = UDim2.fromOffset(18, 0), Size = UDim2.new(1, -120, 1, 0), TextXAlignment = Enum.TextXAlignment.Left,
 }, top)
 local closeBtn = new("TextButton", { Text = "✕", Font = Enum.Font.GothamBold, TextSize = 18, TextColor3 = C.text, BackgroundTransparency = 1,
@@ -748,7 +748,7 @@ do -- dragging
 end
 
 -- minimized pill + RightControl to toggle
-local pill = new("TextButton", { Text = "DBR Hub", Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = C.text, BackgroundColor3 = C.accent,
+local pill = new("TextButton", { Text = "Eze Hub", Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = C.text, BackgroundColor3 = C.accent,
 	Size = UDim2.fromOffset(110, 34), Position = UDim2.new(0, 16, 0.5, -17), Visible = false }, gui)
 corner(pill, 8)
 local function setOpen(open) win.Visible, pill.Visible = open, not open end
