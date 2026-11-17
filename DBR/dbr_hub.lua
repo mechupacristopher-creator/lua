@@ -56,7 +56,7 @@ local SAFE_CF = CFrame.new(0, 10000, 0)
 local cfg = {
 	farm = false, type = "Auto", zenkai = true, world = true, safe = true, transform = true, small = true,
 	quests = false, dragon = false, halloween = false,
-	skills = true, retreatAt = 35, resumeAt = 80, bossRange = 100,
+	skills = true, retreatAt = 35, resumeAt = 80, bossRange = 100, bossFarm = false,
 	antiAfk = true, reconnect = true,
 }
 pcall(function() for k, v in pairs(Http:JSONDecode(readfile(CFG_FILE))) do cfg[k] = v end end)
@@ -393,6 +393,11 @@ end
 -- ===== Halloween 2025 =====
 -- claims challenges, fights event bosses, lights lanterns and smashes pumpkins (on Earth)
 local HW_BOSSES = { Corruptkin = true, ["Corruptkin Ablaze"] = true, ["Pumpkin Monstrosity"] = true, Reaper = true }
+-- every boss (weekly boss list + event bosses), used by "Kill Bosses While Farming" and the Spawned list
+local BOSS_NAMES = { "Gogeta", "Janemba", "Brola", "Piccolo", "Goku", "Carl", "Beast", "Guz", "Maz", "Garuri", "Fluffy Knight",
+	"Corruptkin", "Corruptkin Ablaze", "Pumpkin Monstrosity", "Reaper" }
+local BOSS_SET = {}
+for _, n in ipairs(BOSS_NAMES) do BOSS_SET[n] = true end
 local HW_KEYS = { "FindLanterns", "EventSkill", "FindShop", "DragonBallWish", "DailyRewards", "EarnExp", "DefeatEnemies", "DestroyPumpkins",
 	"BannerRolls", "LightLanterns", "EvilPumpkins", "Corruptkin", "HellsEmissary", "AllChallenges", "WeekendLanterns", "WeekendCorruptkin", "WeekendPumpkins", "HarvestKing" }
 local nextClaim, lampTries, lampSkip = 0, {}, {}
@@ -617,6 +622,21 @@ local function farmStep(char, root)
 			setFast(false) stopCharge(state)
 			S.status = ("Travelling to %s (%s)"):format(w.name, NAMES[st])
 			travel(w.place)
+			return
+		end
+	end
+
+	-- a boss alive in this world: fight it, then go back to training (no travelling for bosses)
+	if cfg.bossFarm then
+		local boss = findNPC(BOSS_SET, root.Position)
+		if boss then
+			if boss.Name == "Pumpkin Monstrosity" then -- Ki immune
+				stopCharge(state) setFast(false)
+				S.hold, S.attack = nil, boss
+				S.status = "Boss: punching Pumpkin Monstrosity"
+			else
+				S.status = "Boss: " .. rangedAttack(root, state, boss, now, true)
+			end
 			return
 		end
 	end
@@ -912,9 +932,8 @@ home.Paragraph(function()
 		:format(S.status, table.concat(parts, "\n"), fmt(c), zenkai(), w or "?")
 end)
 home.Section("Spawned")
--- bosses worth knowing about (weekly boss list + event bosses)
-local WATCH = { "Goku", "Carl", "Brola", "Piccolo", "Beast", "Guz", "Maz", "Janemba", "Gogeta", "Garuri", "Fluffy Knight",
-	"Corruptkin", "Corruptkin Ablaze", "Pumpkin Monstrosity", "Reaper", "Pumpkin Creature" }
+local WATCH = table.clone(BOSS_NAMES)
+table.insert(WATCH, "Pumpkin Creature")
 home.Paragraph(function()
 	local map, lines = workspace:FindFirstChild("Map"), {}
 	if not map then return "Map not loaded" end
@@ -951,6 +970,7 @@ modeToggle(farming, "Auto Farm Stats", "farm")
 farming.Dropdown("Stat to Train", TYPES, function(v) return NAMES[v] end, function() return cfg.type end, function(v) cfg.type = v end)
 cfgToggle(farming, "Auto Zenkai", "zenkai")
 cfgToggle(farming, "Auto Transform", "transform")
+cfgToggle(farming, "Kill Bosses While Farming", "bossFarm")
 farming.Section("World")
 cfgToggle(farming, "Teleport to Best World", "world")
 cfgToggle(farming, "Safe Farm (sky)", "safe")
