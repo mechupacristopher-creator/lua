@@ -794,6 +794,21 @@ local ended = false
 local lastFloor
 local END_VOTES = { replay = "PlayerVoteReplay", next = "PlayerVoteNext", lobby = "PlayerVoteReturn" }
 local END_NAMES = { replay = "Replay", next = "Next", none = "nothing", lobby = "return to lobby" }
+local endVoteAt, endStart, gameoverVotes = 0, 0, nil
+
+-- recuento de votos que manda el servidor al final ({ replay = {...}, lobby = {...}, ... })
+gameCall(function() G.OnNetworkEvent("GameoverVote", function(votes) gameoverVotes = votes end) end)
+local function myEndVote()
+	if type(gameoverVotes) ~= "table" then return false end
+	for _, voters in pairs(gameoverVotes) do
+		if type(voters) == "table" then
+			for k, v in pairs(voters) do
+				if v == lp or k == lp or v == lp.UserId or k == lp.UserId or tostring(v) == tostring(lp.UserId) or tostring(k) == tostring(lp.UserId) then return true end
+			end
+		end
+	end
+	return false
+end
 
 -- misma condición que usa el servidor para rechazar el voto de Replay
 local function replaysExhausted()
@@ -831,17 +846,25 @@ local function step()
 		-- haciendo una bounty: siempre al lobby, para reclamarla o reintentarla
 		local action = (bountyActive() or onBountyMap()) and "lobby" or cfg.endAction
 		-- el servidor solo deja 4 Replays por servidor salvo en Casual Easy/Normal/Hard: agotados, al lobby
+		-- Next solo existe si el juego enseña su botón (no al perder ni en el último stage): si no, Replay o lobby
+		local roundOver = gameCall(function() return G.mainGui.MainFrames.RoundOver end)
+		if action == "next" and roundOver and roundOver.Visible and not (roundOver:FindFirstChild("Next") and roundOver.Next.Visible) then
+			action = "replay"
+		end
 		if action == "replay" and replaysExhausted() then action = "lobby" end
 		if not ended then
-			ended = true
+			ended, endVoteAt, endStart, gameoverVotes = true, os.clock() + 1, os.clock(), nil
 			cfg.stats.matches += 1
 			if gameCall(function() return G.root.roundStats.health > 0 end) then cfg.stats.wins += 1 end
 			save()
-			if END_VOTES[action] then
-				task.wait(1)
-				fire(END_VOTES[action])
-				notify("Match over", "Voted: " .. END_NAMES[action])
-			end
+		end
+		-- votar cuando sale la pantalla de resultados (antes el servidor lo ignora);
+		-- si en 5 s el recuento del juego no nos incluye, votar otra vez (nunca si ya contamos: el voto podría alternar)
+		if END_VOTES[action] and os.clock() >= endVoteAt and not myEndVote()
+			and (roundOver == nil or roundOver.Visible or os.clock() - endStart > 10) then
+			fire(END_VOTES[action])
+			notify("Match over", "Voted: " .. END_NAMES[action])
+			endVoteAt = os.clock() + 5
 		end
 		status = "Match over → " .. END_NAMES[action]
 		return
@@ -965,11 +988,23 @@ do -- arrastrar desde la cabecera
 	end))
 end
 
-local minimized = false
+-- minimizado y tamaño se guardan: tras un teleport el panel vuelve igual (móvil: más pequeño y plegado)
+cfg.uiScale = cfg.uiScale or ((UIS.TouchEnabled and not UIS.KeyboardEnabled) and 0.7 or 1) -- móvil: más pequeño de primeras
+local uiScale = new("UIScale", { Scale = cfg.uiScale }, shadow)
+local function renderMin(animate)
+	local h = cfg.minimized and TOP or H
+	if animate then
+		tween(win, { Size = UDim2.fromOffset(W, h) })
+		tween(shadow, { Size = UDim2.fromOffset(W + 16, h + 16) })
+	else
+		win.Size, shadow.Size = UDim2.fromOffset(W, h), UDim2.fromOffset(W + 16, h + 16)
+	end
+end
+renderMin(false)
 bind(minBtn.Activated:Connect(function()
-	minimized = not minimized
-	tween(win, { Size = UDim2.fromOffset(W, minimized and TOP or H) })
-	tween(shadow, { Size = UDim2.fromOffset(W + 16, (minimized and TOP or H) + 16) })
+	cfg.minimized = not cfg.minimized
+	save()
+	renderMin(true)
 end))
 bind(UIS.InputBegan:Connect(function(i, gp)
 	if not gp and i.KeyCode == Enum.KeyCode.RightShift then shadow.Visible = not shadow.Visible end
@@ -1452,7 +1487,28 @@ do
 		save()
 		notify("Stats reset", "")
 	end)
-	local card2 = section(settingsPage, "Script", 2)
+	local uiCard = section(settingsPage, "Interface", 2)
+	do -- tamaño del panel (móvil): 50 %–150 %
+		local row = new("Frame", { Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = C.bg }, uiCard)
+		round(row, 6) outline(row)
+		text(row, { Size = UDim2.new(1, -120, 1, 0), Position = UDim2.fromOffset(10, 0), Text = "UI size", Font = BOLD, TextSize = 13 })
+		local stepper = new("Frame", { Size = UDim2.fromOffset(98, 24), Position = UDim2.new(1, -106, 0.5, -12), BackgroundColor3 = C.card }, row)
+		round(stepper, 6) outline(stepper)
+		local minus = new("TextButton", { Size = UDim2.fromOffset(24, 24), BackgroundTransparency = 1, Text = "−", Font = BOLD, TextSize = 14, TextColor3 = C.sub }, stepper)
+		local valL = text(stepper, { Size = UDim2.new(1, -48, 1, 0), Position = UDim2.fromOffset(24, 0), Text = "", Font = BOLD, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Center })
+		local plus = new("TextButton", { Size = UDim2.fromOffset(24, 24), Position = UDim2.new(1, -24, 0, 0), BackgroundTransparency = 1, Text = "+", Font = BOLD, TextSize = 14, TextColor3 = C.sub }, stepper)
+		local function setScale(s)
+			cfg.uiScale = math.clamp(math.floor(s * 10 + 0.5) / 10, 0.5, 1.5)
+			uiScale.Scale = cfg.uiScale
+			valL.Text = math.floor(cfg.uiScale * 100 + 0.5) .. "%"
+			save()
+		end
+		bind(minus.Activated:Connect(function() setScale((cfg.uiScale or 1) - 0.1) end))
+		bind(plus.Activated:Connect(function() setScale((cfg.uiScale or 1) + 0.1) end))
+		setScale(cfg.uiScale)
+	end
+	hint(uiCard, "Minimize (–) is remembered: after a teleport the panel comes back minimized.")
+	local card2 = section(settingsPage, "Script", 3)
 	hint(card2, "RightShift shows/hides the window. If Replay/Next teleports you, the macro reloads by itself.")
 	button(card2, "Unload macro", "danger", function() getgenv().TD_UNLOAD() end)
 end
