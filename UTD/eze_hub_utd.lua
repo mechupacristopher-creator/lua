@@ -1,8 +1,3 @@
--- Eze Hub (UTD): Start Match -> units -> Replay -> repeat (survives the Replay teleport).
--- Modes: "Auto" (the macro picks spots) or "Recorded" (replays what you played; saved per map).
--- RightShift hides/shows the window.
-
--- si arrancan dos copias a la vez (p. ej. autoexec + cola de teleport), solo sigue la última
 local instance = {}
 getgenv().TD_INSTANCE = instance
 if getgenv().TD_UNLOAD then pcall(getgenv().TD_UNLOAD) task.wait(0.3) end
@@ -16,39 +11,36 @@ local TweenService = game:GetService("TweenService")
 local lp = Players.LocalPlayer
 local Net = RS:WaitForChild("GenericModules"):WaitForChild("Service"):WaitForChild("Network")
 
--- esperar a que el juego cargue sus datos (tras un teleport tarda)
 local G = getrenv()._G
 while not (G.data and G.serverType and G.FireNetwork) do task.wait(0.5) G = getrenv()._G end
 if getgenv().TD_INSTANCE ~= instance then return end
-if getgenv().TD_UNLOAD then pcall(getgenv().TD_UNLOAD) task.wait(0.3) end -- otra copia terminó de cargar mientras esperábamos
+if getgenv().TD_UNLOAD then pcall(getgenv().TD_UNLOAD) task.wait(0.3) end
 
 local alive = true
 local connections = {}
 local function bind(c) table.insert(connections, c) return c end
 
----------------------------------------------------------------- config (persistente)
--- una config por cuenta (grabaciones, dificultad de Halloween…); la primera vez se copia la compartida antigua
 local CFG_FILE = "td_macro_cfg_" .. lp.UserId .. ".json"
 if not isfile(CFG_FILE) and isfile("td_macro_cfg.json") then pcall(writefile, CFG_FILE, readfile("td_macro_cfg.json")) end
 local cfg = {
 	enabled = true, autoStart = true, autoPlace = true,
-	endAction = "replay", -- al terminar: "replay" | "next" | "none"
-	unknownMap = "auto",  -- modo Grabado en un mapa sin grabación: "auto" | "record"
-	autoCards = true,     -- dungeons: votar cartas automáticamente
-	autoAbility = true,   -- activar la habilidad automática de cada torre
-	autoFish = false,     -- lobby: pescar automáticamente
-	infTower = false,     -- jugar también en Infinite Tower
-	autoBounty = false,   -- hacer las bounties del día solo
-	halloween = false,    -- volver a entrar al mapa de Halloween desde el lobby (burbujas del evento)
-	halloweenDiff = "Normal", -- burbujas "Normal" o "Hard"
-	autoGolden = true,    -- invocar Golden Drago cada vez que se acaba su efecto
-	autoShenron = true,   -- colocar Shen Long donde cubra más torres
-	cardOrder = {},       -- dungeons: prioridad de cartas (la primera es la preferida)
-	recNames = {},        -- [mapKey] = nombre que le pones a la grabación
-	mode = "auto",       -- "auto" | "recorded"
-	firstUnitCost = 350, -- esta unidad se coloca primero
-	units = {},          -- [towerId] = { on, cap }
-	recordings = {},     -- [mapKey] = pasos
+	endAction = "replay",
+	unknownMap = "auto",
+	autoCards = true,
+	autoAbility = true,
+	autoFish = false,
+	infTower = false,
+	autoBounty = false,
+	halloween = false,
+	halloweenDiff = "Normal",
+	autoGolden = true,
+	autoShenron = true,
+	cardOrder = {},
+	recNames = {},
+	mode = "auto",
+	firstUnitCost = 350,
+	units = {},
+	recordings = {},
 	stats = { matches = 0, wins = 0 },
 }
 pcall(function() for k, v in pairs(Http:JSONDecode(readfile(CFG_FILE))) do cfg[k] = v end end)
@@ -64,8 +56,6 @@ if cfg.autoAbility == nil then cfg.autoAbility = true end
 cfg.stats.wins = cfg.stats.wins or 0
 local function save() pcall(writefile, CFG_FILE, Http:JSONEncode(cfg)) end
 
----------------------------------------------------------------- helpers del juego
--- Las funciones del juego pueden bajar la identidad del hilo; se restaura tras cada llamada
 local function fixIdentity() if setthreadidentity then pcall(setthreadidentity, 8) end end
 local function gameCall(f)
 	local ok, r = pcall(f)
@@ -75,8 +65,7 @@ end
 
 local function inMatch() return G.serverType == "Match" end
 local function gameStarted() return gameCall(function() return G.root.roundStats.gameStarted end) end
--- tras un Replay en el mismo servidor _G.gameover sigue en true; si ya está abierta la votación
--- de inicio de la siguiente ronda, la partida no está terminada sino a punto de empezar
+
 local function isGameOver()
 	return G.gameover == true and not gameCall(function() return G.root.matchStartActive end)
 end
@@ -85,14 +74,12 @@ local function wave() return gameCall(function() return G.root.wave.index end) o
 local function fire(name, ...) local args = { ... } gameCall(function() G.FireNetwork(name, table.unpack(args)) end) end
 
 local function equipped() return gameCall(function() return G.data:GetEquippedTowers() end) or {} end
--- Las grabaciones guardan el slot de la barra, no la torre: cambiar la unidad de un slot no rompe el macro
+
 local function slotOf(id)
 	for i, t in pairs(equipped()) do if t.id == id then return i end end
 end
 local function stepTower(s) return s.slot and equipped()[s.slot] end
 
--- Grabaciones antiguas guardaban el id de la torre: pasarlas a slots una vez
--- (1234 era la Rukia que evolucionó a RukiaEvolution1, slot 2)
 local OLD_IDS = { ["6076429612:1234"] = 2 }
 do
 	local changed = false
@@ -122,12 +109,10 @@ local function unitCfg(t)
 	return u
 end
 
--- Tabla de entidades del cliente: entityId -> { ownerId, id, classId, level, maxUpgrade, model, ... }
--- Vive en los upvalues de ClientTowerManager; se busca ahí (rápido) en vez de en toda la memoria
 local entities, lastScan = nil, 0
 local function findEntities()
 	if entities then return entities end
-	-- vacía no se puede reconocer; si no hay ninguna torre en el mapa, sabemos que no tenemos ninguna
+
 	local models = workspace:FindFirstChild("EntityModels")
 	local towers = models and models:FindFirstChild("Towers")
 	if towers and #towers:GetChildren() == 0 then return {} end
@@ -158,7 +143,6 @@ local function findEntities()
 	return entities
 end
 
--- mis torres vivas: [entityId string] = entidad
 local function myTowers()
 	local set = {}
 	local ents = findEntities()
@@ -172,7 +156,6 @@ local function myTowers()
 	return set
 end
 
--- Fantasmas: colocaciones pendientes de dinero (el juego permite 3 a la vez)
 local MAX_PHANTOMS = 3
 local function myPhantoms()
 	local list = {}
@@ -185,7 +168,6 @@ local function myPhantoms()
 	return list
 end
 
--- torres reales + fantasmas de esa unidad
 local function countPlaced(towerId)
 	local n = 0
 	for _, e in pairs(myTowers()) do if e.id == towerId then n += 1 end end
@@ -232,10 +214,8 @@ local function occupied(pos)
 	return false
 end
 
--- se puede colocar ya (hay dinero) o como fantasma (quedan huecos de fantasma)
 local function canPlace(cost) return cash() >= cost or #myPhantoms() < MAX_PHANTOMS end
 
----------------------------------------------------------------- sitios automáticos junto al camino
 local rayParams = RaycastParams.new()
 rayParams.CollisionGroup = "TowerPlacement"
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -246,8 +226,6 @@ local function floorAt(pos)
 	if hit and hit.Instance.CollisionGroup == "Floor" then return hit.Position end
 end
 
--- Identifica el mapa: modo de juego + posición del START (clásico) o de la base (dungeons)
--- Infinite Tower: cada piso sale de una de las 5 salidas (la que lleva el StartTag) con un camino nuevo
 local function itStart()
 	local folder = workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("StartPositions")
 	if not folder then return end
@@ -273,7 +251,7 @@ local bad, noSpot = {}, {}
 local cachedSpots, cachedKey
 local function pathSpots()
 	local map = workspace:FindFirstChild("Map")
-	-- mapas normales: Map.Path con partes; Infinite Tower: Map.PathParts con modelos (su parte "Primary")
+
 	local folder = map and (map:FindFirstChild("Path") or map:FindFirstChild("PathParts"))
 	if not folder then return {} end
 	local parts = {}
@@ -281,10 +259,10 @@ local function pathSpots()
 		if p:IsA("Model") then p = p.PrimaryPart or p:FindFirstChild("Primary") end
 		if p and p:IsA("BasePart") then table.insert(parts, p) end
 	end
-	-- el camino de Infinite Tower cambia en cada piso: la clave incluye un segmento para notarlo
+
 	local key = mapKey() .. (parts[1] and tostring(parts[1].Position) or "")
 	if cachedKey == key then return cachedSpots end
-	-- inicio del camino: el START, o si no hay, el segmento más lejano de la base
+
 	local tag = G.gamemode == "InfiniteTower" and itStart() or map:FindFirstChild("StartTag")
 	local base = map:FindFirstChild("DefendTag")
 	if not tag and base and #parts > 0 then
@@ -294,7 +272,7 @@ local function pathSpots()
 		end
 	end
 	if not tag then return {} end
-	-- ordenar los segmentos siguiendo el camino desde el inicio
+
 	local ordered, from = {}, tag.Position
 	while #parts > 0 do
 		local bi, bd = 1, math.huge
@@ -305,8 +283,7 @@ local function pathSpots()
 		table.insert(ordered, table.remove(parts, bi))
 		from = ordered[#ordered].Position
 	end
-	-- primero un zigzag pegado al camino (ahí van las Kanao, su veneno pega a todo lo que pasa),
-	-- después sitios más abiertos a ambos lados para el resto
+
 	local close, far, zig = {}, {}, 1
 	for _, p in ipairs(ordered) do
 		local cf, size = p.CFrame, p.Size
@@ -334,9 +311,8 @@ local function pathSpots()
 	return spots
 end
 
----------------------------------------------------------------- modo automático
 local status = "Starting"
-local notify = function() end -- la GUI la reemplaza
+local notify = function() end
 
 local function isBad(pos)
 	for _, b in ipairs(bad) do if (b - pos).Magnitude < 2 then return true end end
@@ -360,7 +336,7 @@ end
 local function placementQueue()
 	local first, rest = {}, {}
 	for _, t in ipairs(equipped()) do
-		if unitCfg(t).on and not isDragon(t) then -- los dragones van aparte (dragonTick)
+		if unitCfg(t).on and not isDragon(t) then
 			if costs(t)[1] == cfg.firstUnitCost then table.insert(first, t) else table.insert(rest, t) end
 		end
 	end
@@ -369,9 +345,8 @@ local function placementQueue()
 	return first
 end
 
--- true si aún queda algo por colocar
 local function placeTick()
-	-- sin la tabla de entidades no se pueden contar torres: no colocar a ciegas
+
 	if not findEntities() then status = "Reading game towers…" return true end
 	for _, t in ipairs(placementQueue()) do
 		local cap = math.min(unitCfg(t).cap, limitOf(t))
@@ -390,10 +365,8 @@ local function placeTick()
 	return false
 end
 
----------------------------------------------------------------- grabación y reproducción
 local recording, recSteps, entToStep, recKey = false, {}, {}, nil
 
--- Guarda la grabación en disco (se llama en cada paso: un teleport no la pierde)
 local function saveRecording()
 	if not recKey then return 0 end
 	local clean, remap = {}, {}
@@ -426,7 +399,6 @@ local function startRecording()
 	notify("Recording", "Place your units; every step is saved")
 end
 
--- Lo que se graba se procesa fuera del hook: la colocación del jugador nunca se bloquea
 local function recordCall(remote, args)
 	fixIdentity()
 	if remote == Net.PlayerPlaceTower then
@@ -437,10 +409,10 @@ local function recordCall(remote, args)
 		local idx = #recSteps
 		if not waitCountUp(id, beforeCount, 2) then recSteps[idx].failed = true return end
 		saveRecording()
-		-- si quedó como fantasma, la torre real aparece cuando haya dinero
+
 		local eid = waitNewTower(id, beforeTowers, 300)
 		if eid then entToStep[eid] = idx end
-	elseif remote == Net.PlayerSellTower then -- las mejoras las hace el auto-upgrade del juego
+	elseif remote == Net.PlayerSellTower then
 		local idx = entToStep[tostring(args[1])]
 		if idx then
 			table.insert(recSteps, { t = "sell", ref = idx })
@@ -449,9 +421,6 @@ local function recordCall(remote, args)
 	end
 end
 
----------------------------------------------------------------- Halloween (lobby)
--- El mapa de Halloween no se pide con PlayerSelectedMap (no es seleccionable: el servidor echa del juego).
--- Se entra quedándose dentro de una de las burbujas del evento; cada una muestra su dificultad
 local lastHalloweenTry, halloweenPad = 0, 0
 
 local function halloweenPads()
@@ -467,7 +436,6 @@ local function halloweenPads()
 	return pads
 end
 
--- dentro de la burbuja el juego teletransporta en ~10 s; si no lo hace (TP fallido, burbuja llena), se prueba la siguiente
 local function halloweenTick()
 	local pads = halloweenPads()
 	if #pads == 0 then status = "Halloween: no " .. cfg.halloweenDiff .. " bubbles in this lobby" return end
@@ -516,7 +484,7 @@ local function replayTick()
 		local beforeCount, beforeTowers, i = countPlaced(id), myTowers(), replay.i
 		local pos = Vector3.new(s.pos[1], s.pos[2], s.pos[3])
 		if occupied(pos) then
-			-- sitio cogido (p. ej. la otra cuenta con la misma grabación): el hueco libre más cercano alrededor
+
 			local free
 			for r = 4, 12, 4 do
 				for a = 0, 315, 45 do
@@ -543,13 +511,10 @@ local function replayTick()
 		if eid and myTowers()[eid] then Net.PlayerSellTower:FireServer(eid) end
 		nextStep()
 	else
-		nextStep() -- pasos antiguos de mejora: ahora los hace el juego
+		nextStep()
 	end
 end
 
----------------------------------------------------------------- cartas (dungeons)
--- Prioridad por defecto: inmunidades (dan igual y dan 15 tokens) arriba;
--- lo peor al final: Useless Artifacts/Traits, cualquier escudo y, la última, Degrading Towers
 local CARD_WORST = { "UselessArtifacts", "UselessTraits", "ElementalShield", "ShieldHealth", "Shielded", "TowerDegrading" }
 local CARD_DEFAULT_ORDER = {
 	"BleedingImmunity", "PoisonImmunity", "BurningImmunity", "SlowImmunity", "TimestopImmunity",
@@ -568,14 +533,13 @@ local function cardInfo(id)
 	end) or { title = id, category = "?", text = "" }
 end
 
--- Lista completa de prioridad: la guardada, más cartas nuevas del juego antes de las dos peores
 local function cardOrder()
 	local order, seen = {}, {}
 	local source = #cfg.cardOrder > 0 and cfg.cardOrder or CARD_DEFAULT_ORDER
 	for _, id in ipairs(source) do
 		if not seen[id] and RS.Modules.Item.Challenges:FindFirstChild(id) then table.insert(order, id) seen[id] = true end
 	end
-	-- cartas nuevas del juego: justo encima del bloque de las peores
+
 	for _, c in ipairs(RS.Modules.Item.Challenges:GetChildren()) do
 		if not seen[c.Name] then table.insert(order, math.max(1, #order - #CARD_WORST + 1), c.Name) seen[c.Name] = true end
 	end
@@ -608,10 +572,6 @@ gameCall(function()
 	end)
 end)
 
----------------------------------------------------------------- dragones
--- Golden Drago: se invoca, vuela ~20 s y da x2 de rango a todas las torres durante su efecto → reinvocar al acabar.
--- Shen Long: torre de apoyo (+200% daño en radio 50), 1 por partida → donde cubra más torres propias.
--- Solo cuando ya no queda nada por colocar y con el dinero en mano (sin fantasmas: ocuparían los 3 huecos)
 local SHENRON_RANGE = 50
 
 local function placeAt(t, spots)
@@ -658,9 +618,6 @@ local function dragonTick()
 	end
 end
 
----------------------------------------------------------------- habilidad automática
--- autoAbility: nil = la torre no tiene habilidad, false = apagada. Máx. 3 intentos por torre y nivel
--- (algunas desbloquean la habilidad al subir de nivel, así que los intentos se reinician al mejorar)
 local abilityTries, lastAbilityCheck = {}, 0
 local function abilityTick()
 	if not cfg.autoAbility or os.clock() - lastAbilityCheck < 2 then return end
@@ -678,22 +635,18 @@ local function abilityTick()
 	end
 end
 
----------------------------------------------------------------- bounties
--- 3 al día (1 Easy, 2 Hard, 3 Extreme): se coge la más difícil sin hacer, se juega su mapa en
--- Casual / Hard / 30 oleadas, al acabar se vuelve al lobby y se reclama (si se perdió, se reintenta)
 local BOUNTY_NAMES = { "Easy", "Hard", "Extreme" }
 local lastBountyTry = 0
 local function selectedBounty() return gameCall(function() return G.data.selectedBounty end) or 0 end
 local function bountyInfo(i) return gameCall(function() return G.data.bountiesFinished[tostring(i)] end) end
 local function bountyActive() return cfg.autoBounty and selectedBounty() > 0 end
--- jugando el mapa de la bounty cogida (con o sin Auto Bounty): no repetir, volver para reclamarla
+
 local function onBountyMap()
 	local sel = selectedBounty()
 	if sel == 0 then return false end
 	return gameCall(function() return G.BountyManager:GetBounty(sel).mapId == G.data.selectedMapId end) == true
 end
 
--- reclamar una bounty terminada (también con Auto Bounty apagado)
 local function claimBounty()
 	local sel = selectedBounty()
 	local info = sel > 0 and bountyInfo(sel)
@@ -712,7 +665,7 @@ local function freeTeleporter()
 		local players = 0
 		gameCall(function()
 			for uid in G.root.teleporters[t.Name].playerList:Pairs() do
-				if tostring(uid) ~= tostring(lp.UserId) then players += 1 end -- yo mismo no cuento (reintento)
+				if tostring(uid) ~= tostring(lp.UserId) then players += 1 end
 			end
 		end)
 		if t:GetAttribute("originalName") == "Teleporter" and players == 0 then return t:FindFirstChild("hitbox", true) end
@@ -738,13 +691,13 @@ local function bountyLobbyTick()
 	local b = gameCall(function() return G.BountyManager:GetBounty(sel) end)
 	if not b then return end
 	status = string.format("Bounty %s: %s (Hard, 30 waves)", BOUNTY_NAMES[sel], tostring(b.mapId))
-	if os.clock() - lastBountyTry < 30 then return end -- dando tiempo al teletransporte
+	if os.clock() - lastBountyTry < 30 then return end
 	lastBountyTry = os.clock()
 	local hrp = lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
 	local pad = freeTeleporter()
 	if not (hrp and pad) then status = "Bounty: no free teleporter" return end
 	hrp.CFrame = pad.CFrame + Vector3.new(0, 3, 0)
-	task.wait(2) -- el menú del teletransportador manda su propia selección al abrirse: ir después
+	task.wait(2)
 	fire("PlayerSelectedStage", "Casual")
 	task.wait(0.4)
 	fire("PlayerSelectedMap", b.mapId)
@@ -753,24 +706,19 @@ local function bountyLobbyTick()
 	task.wait(0.4)
 	fire("PlayerSelectedWaveCount", 30)
 	task.wait(0.6)
-	-- el TP puede fallar: si sigue en el lobby se reintenta cada 30 s desde aquí
+
 	if hrp.Parent then hrp.CFrame = pad.CFrame + Vector3.new(0, 3, 0) end
 	fire("PlayerQuickstartTeleport")
 	notify("Bounty " .. BOUNTY_NAMES[sel], tostring(b.mapId) .. " · Hard · 30 waves")
 end
 
----------------------------------------------------------------- velocidad
--- El juego solo pide la velocidad guardada si eres el anfitrión, y pide 2x aunque no tengas el gamepass
--- (el servidor lo rechaza y se queda en 1x): mantener la máxima permitida
--- Dragones: el juego trae su propio botón "auto" (el ⟳ del hueco) que los invoca solos al tener el dinero.
--- Es solo del cliente y empieza apagado (rojo) en cada partida → pulsarlo nosotros si está rojo
 local function dragoAutoTick()
 	if not cfg.autoGolden then return end
 	local hotbar = gameCall(function() return G.mainGui.HUD.Toolbox.Hotbar end)
 	for _, slot in ipairs(hotbar and hotbar:GetChildren() or {}) do
 		local b = slot:FindFirstChild("Button") and slot.Button:FindFirstChild("ToggleAuto")
 		local bg = b and b.Visible and b:FindFirstChild("Background")
-		if bg and bg.BackgroundColor3.G < 0.5 then -- rojo = apagado, verde = encendido
+		if bg and bg.BackgroundColor3.G < 0.5 then
 			for _, c in ipairs(getconnections(b.Activated)) do
 				local f = c.Function
 				if f and tostring(debug.getinfo(f).source):find("ClientTowerManager") then gameCall(f) end
@@ -781,7 +729,7 @@ end
 
 local lastSpeedTry = 0
 local function speedTick()
-	if os.clock() - lastSpeedTry < 5 then return end -- el servidor ignora peticiones con menos de 3 s
+	if os.clock() - lastSpeedTry < 5 then return end
 	local want = gameCall(function() return G.Item.Gamepass.GameSpeed3x:IsOwnedBy(G.player) end) and 2 or 1.5
 	if gameCall(function() return G.root.gameSpeedMultiplier end) ~= want then
 		lastSpeedTry = os.clock()
@@ -789,14 +737,12 @@ local function speedTick()
 	end
 end
 
----------------------------------------------------------------- bucle principal
 local ended = false
 local lastFloor
 local END_VOTES = { replay = "PlayerVoteReplay", next = "PlayerVoteNext", lobby = "PlayerVoteReturn" }
 local END_NAMES = { replay = "Replay", next = "Next", none = "nothing", lobby = "return to lobby" }
 local endVoteAt, endStart, gameoverVotes = 0, 0, nil
 
--- recuento de votos que manda el servidor al final ({ replay = {...}, lobby = {...}, ... })
 gameCall(function() G.OnNetworkEvent("GameoverVote", function(votes) gameoverVotes = votes end) end)
 local function myEndVote()
 	if type(gameoverVotes) ~= "table" then return false end
@@ -810,7 +756,6 @@ local function myEndVote()
 	return false
 end
 
--- misma condición que usa el servidor para rechazar el voto de Replay
 local function replaysExhausted()
 	return gameCall(function()
 		if G.gamemode == "InfiniteTower" or G.isDungeon or G.Item.Gamemode.Classic:HasUnlimitedReplays() then return false end
@@ -830,7 +775,7 @@ local function step()
 	if G.gamemode == "InfiniteTower" and not cfg.infTower then status = "Infinite Tower: enable it in Main" return end
 	if G.gamemode ~= "Battlemode" then speedTick() end
 	dragoAutoTick()
-	-- piso nuevo de Infinite Tower: las torres desaparecen y el camino cambia → empezar de cero
+
 	local floor = gameCall(function() return G.root.currentFloor end)
 	if floor ~= lastFloor then
 		if lastFloor then
@@ -839,14 +784,13 @@ local function step()
 		end
 		lastFloor = floor
 	end
-	-- el mapa cambió (p. ej. Next a otro piso): cerrar la grabación del mapa anterior
+
 	if recording and mapKey() ~= recKey then stopRecording() end
 	if isGameOver() then
 		stopRecording()
-		-- haciendo una bounty: siempre al lobby, para reclamarla o reintentarla
+
 		local action = (bountyActive() or onBountyMap()) and "lobby" or cfg.endAction
-		-- el servidor solo deja 4 Replays por servidor salvo en Casual Easy/Normal/Hard: agotados, al lobby
-		-- Next solo existe si el juego enseña su botón (no al perder ni en el último stage): si no, Replay o lobby
+
 		local roundOver = gameCall(function() return G.mainGui.MainFrames.RoundOver end)
 		if action == "next" and roundOver and roundOver.Visible and not (roundOver:FindFirstChild("Next") and roundOver.Next.Visible) then
 			action = "replay"
@@ -858,8 +802,7 @@ local function step()
 			if gameCall(function() return G.root.roundStats.health > 0 end) then cfg.stats.wins += 1 end
 			save()
 		end
-		-- votar cuando sale la pantalla de resultados (antes el servidor lo ignora);
-		-- si en 5 s el recuento del juego no nos incluye, votar otra vez (nunca si ya contamos: el voto podría alternar)
+
 		if END_VOTES[action] and os.clock() >= endVoteAt and not myEndVote()
 			and (roundOver == nil or roundOver.Visible or os.clock() - endStart > 10) then
 			fire(END_VOTES[action])
@@ -870,13 +813,12 @@ local function step()
 		return
 	end
 	if ended then
-		-- nueva partida en el mismo servidor: empezar de cero
+
 		ended = false
 		bad, noSpot, abilityTries = {}, {}, {}
 		replay = { i = 1, ents = {}, tries = 0 }
 	end
-	-- mapa sin grabación + "Grabarlo yo": grabar desde el principio (también antes de Start), nunca a mitad
-	-- en una bounty nunca: no hay nadie para grabar, se juega en automático
+
 	local recordUnknown = cfg.unknownMap == "record" and not bountyActive()
 	if cfg.mode == "recorded" and recordUnknown and not recording and not cfg.recordings[mapKey()]
 		and (not gameStarted() or wave() <= 1) then
@@ -884,7 +826,7 @@ local function step()
 	end
 	if not gameStarted() then
 		status = recording and string.format("⏺ Recording (before start)… %d steps", #recSteps) or "Waiting for start"
-		-- el voto lleva el id de la votación actual (si no, el servidor lo ignora)
+
 		if cfg.autoStart then fire("PlayerVoteToStartMatch", gameCall(function() return G.root.matchStartVoteId end)) task.wait(2) end
 		return
 	end
@@ -892,7 +834,7 @@ local function step()
 	if recording then
 		status = string.format("⏺ Recording… %d steps", #recSteps)
 	elseif cfg.mode == "recorded" and cfg.recordings[mapKey()] then
-		local rec = cfg.recordings[mapKey()] -- replayTick espera: el mapa puede cambiar entre medias
+		local rec = cfg.recordings[mapKey()]
 		replayTick()
 		if replay.i > #rec then dragonTick() end
 	elseif cfg.mode == "recorded" and recordUnknown then
@@ -903,18 +845,14 @@ local function step()
 	end
 end
 
--- Replay, bounties, volver al lobby…: en el servidor siguiente el macro se vuelve a ejecutar solo.
--- Se encola al cargar: el evento OnTeleport no salta en los teletransportes que lanza el servidor
 local queue = queue_on_teleport or (syn and syn.queue_on_teleport)
--- una sola vez por servidor: recargar el macro aquí no debe encolarlo otra vez
+
 if queue and not getgenv().TD_QUEUED then
 	getgenv().TD_QUEUED = true
-	-- copia local si la hay (desarrollo); si no, la versión publicada en GitHub
+
 	pcall(queue, 'if isfile("td_macro.lua") then loadstring(readfile("td_macro.lua"))() else loadstring(game:HttpGet("https://raw.githubusercontent.com/mechupacristopher-creator/lua/main/UTD/eze_hub_utd.lua"))() end')
 end
 
----------------------------------------------------------------- GUI
--- estilo oscuro y plano: ventana gris, filas con borde, casillas cuadradas
 local C = {
 	panel = Color3.fromRGB(24, 24, 26), bg = Color3.fromRGB(32, 32, 35), side = Color3.fromRGB(20, 20, 22), card = Color3.fromRGB(40, 40, 44),
 	hover = Color3.fromRGB(46, 46, 51), line = Color3.fromRGB(52, 52, 58),
@@ -947,14 +885,12 @@ end
 
 local screen = new("ScreenGui", { Name = "TDMacro", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, IgnoreGuiInset = true }, (gethui and gethui()) or game:GetService("CoreGui"))
 
--- ventana
 local W, H, SIDE, TOP = 560, 370, 150, 44
 local shadow = new("Frame", { Size = UDim2.fromOffset(W + 16, H + 16), Position = UDim2.new(0.5, -W / 2 - 8, 0.5, -H / 2 - 8), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.55 }, screen)
 round(shadow, 16)
 local win = new("Frame", { Size = UDim2.fromOffset(W, H), Position = UDim2.fromOffset(8, 8), BackgroundColor3 = C.panel, ClipsDescendants = true }, shadow)
 round(win, 8) outline(win)
 
--- cabecera
 local top = new("Frame", { Size = UDim2.new(1, 0, 0, TOP), BackgroundColor3 = C.side, BorderSizePixel = 0 }, win)
 new("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1), BackgroundColor3 = C.line, BorderSizePixel = 0 }, top)
 local titleL = text(top, { Size = UDim2.new(0, 0, 1, 0), AutomaticSize = Enum.AutomaticSize.X, Position = UDim2.fromOffset(16, 0), Text = "Eze Hub", Font = BOLD, TextSize = 16 })
@@ -970,7 +906,7 @@ end
 local closeBtn = topButton(-36, "×")
 local minBtn = topButton(-68, "–")
 
-do -- arrastrar desde la cabecera
+do
 	local dragging, startPos, startMouse
 	bind(top.InputBegan:Connect(function(i)
 		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
@@ -988,8 +924,7 @@ do -- arrastrar desde la cabecera
 	end))
 end
 
--- minimizado y tamaño se guardan: tras un teleport el panel vuelve igual (móvil: más pequeño y plegado)
-cfg.uiScale = cfg.uiScale or ((UIS.TouchEnabled and not UIS.KeyboardEnabled) and 0.7 or 1) -- móvil: más pequeño de primeras
+cfg.uiScale = cfg.uiScale or ((UIS.TouchEnabled and not UIS.KeyboardEnabled) and 0.7 or 1)
 local uiScale = new("UIScale", { Scale = cfg.uiScale }, shadow)
 local function renderMin(animate)
 	local h = cfg.minimized and TOP or H
@@ -1010,13 +945,11 @@ bind(UIS.InputBegan:Connect(function(i, gp)
 	if not gp and i.KeyCode == Enum.KeyCode.RightShift then shadow.Visible = not shadow.Visible end
 end))
 
--- barra lateral
 local side = new("Frame", { Size = UDim2.new(0, SIDE, 1, -TOP), Position = UDim2.fromOffset(0, TOP), BackgroundColor3 = C.side, BorderSizePixel = 0 }, win)
 new("Frame", { Size = UDim2.new(0, 1, 1, 0), Position = UDim2.new(1, -1, 0, 0), BackgroundColor3 = C.line, BorderSizePixel = 0 }, side)
 local tabList = new("Frame", { Size = UDim2.new(1, -16, 1, -70), Position = UDim2.fromOffset(8, 10), BackgroundTransparency = 1 }, side)
 list(tabList, 4)
 
--- abajo de la barra lateral: tu avatar y nombre; click = pausar/reanudar el macro
 local power = new("TextButton", { Size = UDim2.new(1, 0, 0, 54), Position = UDim2.new(0, 0, 1, -54), BackgroundColor3 = C.side, Text = "", AutoButtonColor = false }, side)
 new("Frame", { Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = C.line, BorderSizePixel = 0 }, power)
 local avatar = new("ImageLabel", { Size = UDim2.fromOffset(32, 32), Position = UDim2.fromOffset(10, 11), BackgroundColor3 = C.card, Image = "" }, power)
@@ -1041,7 +974,6 @@ bind(power.Activated:Connect(function()
 end))
 renderPower()
 
--- páginas
 local pages, tabs = {}, {}
 local function selectTab(name)
 	for n, t in pairs(tabs) do
@@ -1068,9 +1000,8 @@ local function addTab(name, _, order)
 	return page
 end
 
--- componentes
 local function section(page, title, order)
-	-- sección = grupo sin fondo; cada fila lleva su propio recuadro (como el panel de referencia)
+
 	local card = new("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, LayoutOrder = order or 0 }, page)
 	list(card, 6)
 	if title then text(card, { Size = UDim2.new(1, 0, 0, 16), Text = string.upper(title), Font = BOLD, TextSize = 11, TextColor3 = C.sub, LayoutOrder = -1 }) end
@@ -1138,7 +1069,6 @@ local function infoRow(parent, label)
 	return text(row, { Size = UDim2.new(0.5, 0, 1, 0), Position = UDim2.fromScale(0.5, 0), Text = "—", Font = BOLD, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Right })
 end
 
--- notificaciones (abajo a la derecha)
 local toastHolder = new("Frame", { Size = UDim2.fromOffset(260, 400), Position = UDim2.new(1, -272, 1, -412), BackgroundTransparency = 1 }, screen)
 new("UIListLayout", { Padding = UDim.new(0, 6), VerticalAlignment = Enum.VerticalAlignment.Bottom, SortOrder = Enum.SortOrder.LayoutOrder }, toastHolder)
 notify = function(title, body)
@@ -1163,7 +1093,6 @@ notify = function(title, body)
 	end)
 end
 
----------------------------------------------------------------- pestaña: Panel
 local panel = addTab("Main", "◉", 1)
 local statusDot, statusLabel
 do
@@ -1198,7 +1127,6 @@ do
 	toggle(card, "Auto fish (lobby)", "Perfect catch every 5 s until the daily limit", "autoFish")
 end
 
----------------------------------------------------------------- pestaña: Unidades
 local unitsPage = addTab("Units", "▦", 2)
 local unitRows = {}
 local function buildUnits()
@@ -1238,10 +1166,9 @@ local function buildUnits()
 end
 buildUnits()
 
----------------------------------------------------------------- pestaña: Grabación
 local recPage = addTab("Recording", "⏺", 3)
 local recState, recMap, recCount, recBtn, setRecColor, savedList, editTitle, stepsList
-local editKey -- grabación que se está editando (por defecto la de este mapa)
+local editKey
 local editVersion = 0
 
 local function recName(key, index)
@@ -1278,7 +1205,6 @@ local function smallButton(parent, label, color, x, cb)
 	return b
 end
 
--- Edición de pasos: las ventas apuntan al índice de su colocación, así que se reajustan
 local function deleteStep(steps, i)
 	table.remove(steps, i)
 	for j = #steps, 1, -1 do
@@ -1348,7 +1274,6 @@ local function renderSaved()
 	end
 end
 
--- Mover una colocación: click en 📍 y luego click en el suelo del mapa (click derecho cancela)
 local moving
 local function setMoving(s)
 	moving = s
@@ -1405,7 +1330,7 @@ local function renderSteps()
 			local slotBtn = smallButton(row, "S" .. tostring(s.slot or "?"), nil, -134, function()
 				local slots = 0
 				for k in pairs(equipped()) do slots = math.max(slots, k) end
-				s.slot = (s.slot or 0) % math.max(slots, 7) + 1 -- 7 slots: el 7.º es el dragón
+				s.slot = (s.slot or 0) % math.max(slots, 7) + 1
 				edited()
 			end)
 			slotBtn.Size = UDim2.fromOffset(30, 20)
@@ -1419,7 +1344,6 @@ local function renderSteps()
 	end
 end
 
----------------------------------------------------------------- pestaña: Cartas
 local cardsPage = addTab("Cards", "🃏", 4)
 do
 	local card = section(cardsPage, "Dungeon cards", 1)
@@ -1466,7 +1390,6 @@ do
 	end)
 end
 
----------------------------------------------------------------- pestaña: Halloween
 local halloweenPage = addTab("Halloween", "🎃", 5)
 do
 	local card = section(halloweenPage, "Farm Halloween", 1)
@@ -1475,7 +1398,6 @@ do
 	hint(card, "The game only allows 4 Replays per server on this map: after that the macro returns to the lobby and joins again. If no teleport in 20 s, it tries the next bubble.")
 end
 
----------------------------------------------------------------- pestaña: Ajustes
 local settingsPage = addTab("Settings", "⚙", 6)
 local runtimeL, matchesL
 do
@@ -1488,7 +1410,7 @@ do
 		notify("Stats reset", "")
 	end)
 	local uiCard = section(settingsPage, "Interface", 2)
-	do -- tamaño del panel (móvil): 50 %–150 %
+	do
 		local row = new("Frame", { Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = C.bg }, uiCard)
 		round(row, 6) outline(row)
 		text(row, { Size = UDim2.new(1, -120, 1, 0), Position = UDim2.fromOffset(10, 0), Text = "UI size", Font = BOLD, TextSize = 13 })
@@ -1516,7 +1438,6 @@ end
 selectTab("Main")
 bind(closeBtn.Activated:Connect(function() getgenv().TD_UNLOAD() end))
 
----------------------------------------------------------------- refresco
 local startTime = os.clock()
 local function refresh()
 	subtitle.Text = string.format("%s  ·  %s", tostring(G.gamemode or "Lobby"), cfg.mode == "auto" and "Auto" or "Recorded")
@@ -1578,8 +1499,6 @@ task.spawn(function()
 	end
 end)
 
--- Pesca: el servidor solo comprueba 5 s entre capturas y el límite diario, así que el aviso
--- de captura cuenta siempre como acierto (sin minijuego que fallar)
 task.spawn(function()
 	local warnedFull = false
 	while alive do

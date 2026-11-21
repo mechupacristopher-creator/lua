@@ -1,18 +1,10 @@
---[[
-	Eze Hub - Dragon Ball Rage
-	Stat farm (optimal world, safe farm, auto Zenkai, auto transform), auto quests,
-	Halloween event (lanterns, Corruptkin, pumpkins), Dragon Ball finder.
-	Re-running unloads the previous copy. After a world teleport it reloads itself.
-	Based on afy's Dragon Ball Rage AutoFarm, with Ki Blasts updated to the new packet system.
-]]
-
 local VERSION = "1.0.0"
 local FILE, CFG_FILE = "dbr_farm.lua", "dbr_farm_cfg.json"
--- raw URL used to reload after teleports when the script is not saved locally (set after publishing)
+
 local SOURCE_URL = "https://raw.githubusercontent.com/mechupacristopher-creator/lua/main/DBR/dbr_hub.lua"
 
 local G = getgenv()
--- claim the slot before any yield: after a teleport both queue_on_teleport and autoexec start a copy at once
+
 local TOKEN = {}
 G.DBRFarmToken = TOKEN
 if G.DBRFarm and G.DBRFarm.Unload then pcall(G.DBRFarm.Unload) end
@@ -38,7 +30,7 @@ local Quests = require(RS.Modules.Quests.Quests)
 local QuestData = require(RS.Modules.Quests.QuestDataHandler)
 local peek = require(RS.Modules.Library.Fusion).peek
 local EventBus = require(RS.Modules.Library.EventBus)
-if setthreadidentity then pcall(setthreadidentity, 8) end -- game requires drop the thread identity
+if setthreadidentity then pcall(setthreadidentity, 8) end
 
 local EARTH, YARDRAT = 71315343, 1357512648
 local STATS = { "Attack", "Agility", "Defense", "Ki" }
@@ -53,7 +45,6 @@ local WORLDS = {
 }
 local SAFE_CF = CFrame.new(0, 10000, 0)
 
--- ===== saved config =====
 local cfg = {
 	farm = false, type = "Auto", zenkai = true, world = true, safe = true, transform = true, small = true,
 	quests = false, dragon = false, halloween = false,
@@ -62,10 +53,10 @@ local cfg = {
 }
 pcall(function() for k, v in pairs(Http:JSONDecode(readfile(CFG_FILE))) do cfg[k] = v end end)
 local function saveCfg() pcall(writefile, CFG_FILE, Http:JSONEncode(cfg)) end
--- no safe farm on Earth: quests, lanterns and pumpkins happen on the ground there
+
 local function safeHold() if cfg.safe and game.PlaceId ~= EARTH then return SAFE_CF end end
 
-if G.DBRFarmToken ~= TOKEN then return end -- a newer copy started while this one was loading
+if G.DBRFarmToken ~= TOKEN then return end
 local S = { pumpkin = false, conns = {}, status = "Idle", fast = false, charging = false, loadedAt = os.clock() }
 G.DBRFarm = S
 local function alive() return G.DBRFarm == S end
@@ -75,7 +66,6 @@ local function cap() local ok, v = pcall(StatUtils.GetMaxStatsFromPlayer, StatUt
 local function fmt(n) return ("%.1fM"):format(n / 1e6) end
 local function anyOn() return cfg.farm or cfg.dragon or cfg.quests or cfg.halloween end
 
--- ===== teleports =====
 local function queueReload()
 	if not queue_on_teleport then return end
 	local src = ('if isfile and isfile("%s") then loadstring(readfile("%s"))() elseif "%s" ~= "" then loadstring(game:HttpGet("%s"))() end')
@@ -83,8 +73,6 @@ local function queueReload()
 	pcall(queue_on_teleport, src)
 end
 
--- Earth only: the emptiest other Earth server (TeleportToServer fails for the reserved worlds).
--- 0-player entries are dead/closing servers and fail with "restricted" (773); servers that failed are skipped.
 local badServers, lastHop, lastTp = {}, nil, 0
 local function smallestEarthServer()
 	local root = RS:FindFirstChild("_servers")
@@ -97,7 +85,7 @@ local function smallestEarthServer()
 	end
 	return best
 end
--- servers already visited (saved, so it survives the reload after each hop); skipped for 30 min by Dragon Ball hops
+
 local VISITED_FILE = "dbr_visited.json"
 local visited = {}
 pcall(function() visited = Http:JSONDecode(readfile(VISITED_FILE)) end)
@@ -106,7 +94,7 @@ if game.PlaceId == EARTH then
 	for id, t in pairs(visited) do if os.time() - t > 1800 then visited[id] = nil end end
 	pcall(writefile, VISITED_FILE, Http:JSONEncode(visited))
 end
--- a random one of the 5 smallest Earth servers you haven't been to recently
+
 local function freshEarthServer()
 	local root = RS:FindFirstChild("_servers")
 	local list = root and root:FindFirstChild(tostring(EARTH))
@@ -114,7 +102,7 @@ local function freshEarthServer()
 	for _, sv in ipairs(list and list:GetChildren() or {}) do
 		local n = sv:GetAttribute("plrCount") or 0
 		local same = sv.Name == game.JobId or (mine and sv:GetAttribute("code") == mine)
-		-- 2+ players: near-empty servers are often closing and fail with 771 "server no longer available"
+
 		if not same and n >= 2 and not badServers[sv.Name] and not visited[sv.Name] then table.insert(pool, sv) end
 	end
 	if #pool == 0 then return nil end
@@ -132,13 +120,13 @@ local function hopSmallest()
 end
 table.insert(S.conns, TeleportService.TeleportInitFailed:Connect(function(plr)
 	if plr ~= LP or not lastHop then return end
-	badServers[lastHop], lastHop = true, nil -- e.g. 771 "server no longer available": the list was stale
+	badServers[lastHop], lastHop = true, nil
 	task.wait(3)
 	if not alive() then return end
 	if cfg.dragon then
-		lastTp = 0 -- let the Dragon Ball finder hop again right away (it picks another unvisited server)
+		lastTp = 0
 	else
-		hopSmallest() -- try the next smallest one
+		hopSmallest()
 	end
 end))
 
@@ -146,11 +134,10 @@ local function travel(place, otherServer)
 	if os.clock() - lastTp < 20 then return end
 	lastTp = os.clock()
 	queueReload()
-	-- picking a specific server only works for Earth servers; for the reserved training worlds it gives
-	-- "restricted area", so it is never used while stat farming
+
 	local best
 	if otherServer and place == EARTH and game.PlaceId == EARTH then
-		best = freshEarthServer() -- Dragon Ball hop: a new server, never one we just checked
+		best = freshEarthServer()
 		lastHop = best and best.Name
 	elseif cfg.small and not cfg.farm and place == EARTH then
 		best = smallestEarthServer()
@@ -159,7 +146,7 @@ local function travel(place, otherServer)
 		if best then
 			pcall(Network.InvokeServer, Network, "TeleportToServer", place, best.Name)
 		elseif place == EARTH and (otherServer or place == game.PlaceId) then
-			-- only Earth is public: the training worlds are reserved and a direct Teleport gives "restricted area"
+
 			pcall(TeleportService.Teleport, TeleportService, EARTH)
 		else
 			pcall(Network.InvokeServer, Network, "TeleportToWorld", place)
@@ -177,14 +164,12 @@ local function bestWorld(st)
 	return best
 end
 
--- the chosen stat if it is below the cap, otherwise the first one that is
 local function pickStat()
 	local c = cap()
 	if cfg.type ~= "Auto" and stat(cfg.type) < c then return cfg.type end
 	for _, n in ipairs(STATS) do if stat(n) < c then return n end end
 end
 
--- ===== training actions =====
 local kiSeq = 1000000 + math.random(1, 100000)
 local function kiBlast(char, root, targetPos)
 	kiSeq += 1
@@ -208,7 +193,6 @@ end
 local nextQuestReq, flightAngle, skipUntil, waitSince = 0, 0, {}, {}
 local nextAct, nextTransform, nextCharge, nextPrompt, nextKi = 0, 0, 0, 0, 0
 
--- charge Ki over the network below 20% until 90%; returns true while charging
 local function chargeIfNeeded(state, now)
 	local en, mx = state and state:FindFirstChild("Energy"), state and state:FindFirstChild("MaxEnergy")
 	local pct = (en and mx and mx.Value > 0) and en.Value / mx.Value * 100 or 100
@@ -225,7 +209,6 @@ local function chargeIfNeeded(state, now)
 	return false, pct
 end
 
--- ===== dragon balls =====
 local function dragonData()
 	local v = Stats:FindFirstChild("DragonBalls")
 	if not v then return end
@@ -244,7 +227,6 @@ local function findBall(have)
 	end
 end
 
--- ===== targets =====
 local target
 local function hp(m)
 	if not (m and m.Parent) then return false end
@@ -253,7 +235,7 @@ local function hp(m)
 	local hum = m:FindFirstChildOfClass("Humanoid")
 	return hum ~= nil and hum.Health > 0
 end
--- names = {Name=true} or "any" (any enemy)
+
 local function findNPC(names, from)
 	local npcs = workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("NPCs")
 	local best, bd = nil, math.huge
@@ -261,7 +243,7 @@ local function findNPC(names, from)
 		local ok = (names == "any" and m.Name ~= "Dummy") or (type(names) == "table" and names[m.Name])
 		if ok and hp(m) then
 			local d = (m:GetPivot().Position - from).Magnitude
-			-- shortcut: models >15k studs away are decoys (e.g. a 100 HP Janemba far outside Hell); raise if a real map is bigger
+
 			if d < bd and d < 15000 then best, bd = m, d end
 		end
 	end
@@ -284,7 +266,6 @@ local function pumpkinTarget(from)
 	return best
 end
 
--- ===== positioning every frame =====
 table.insert(S.conns, RunService.Heartbeat:Connect(function(dt)
 	if not alive() then return end
 	local root = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
@@ -301,7 +282,7 @@ table.insert(S.conns, RunService.Heartbeat:Connect(function(dt)
 		local pos = p + (flat.Magnitude > 0.1 and flat.Unit or Vector3.new(0, 0, 1)) * 3
 		root.CFrame = CFrame.lookAt(pos, Vector3.new(p.X, pos.Y, p.Z))
 	elseif S.ranged and hp(S.ranged) then
-		-- keep distance (close-range combos never end), stay above and orbit to dodge
+
 		local p = S.ranged:GetPivot().Position
 		S.orbit = (S.orbit or 0) + dt * (S.rangedBoss and 1 or 0.6)
 		local pos = p + Vector3.new(math.cos(S.orbit), 0, math.sin(S.orbit)) * (S.rangedR or 35) + Vector3.new(0, S.rangedBoss and 30 or 15, 0)
@@ -314,7 +295,6 @@ table.insert(S.conns, RunService.Heartbeat:Connect(function(dt)
 	root.AssemblyLinearVelocity = Vector3.zero
 end))
 
--- ===== anti-AFK and reconnect =====
 table.insert(S.conns, LP.Idled:Connect(function()
 	if not cfg.antiAfk then return end
 	pcall(function() VirtualUser:CaptureController() VirtualUser:ClickButton2(Vector2.new()) end)
@@ -323,30 +303,28 @@ pcall(function()
 	table.insert(S.conns, GuiService.ErrorMessageChanged:Connect(function()
 		if not (cfg.reconnect and anyOn()) then return end
 		local okm, m = pcall(function()
-			if setthreadidentity then setthreadidentity(8) end -- GetErrorMessage needs RobloxScript capability
+			if setthreadidentity then setthreadidentity(8) end
 			return GuiService:GetErrorMessage()
 		end)
 		local msg = okm and tostring(m or ""):lower() or ""
-		-- a failed teleport is not a disconnect: travel()/hop retry it by themselves
+
 		if (okm and msg == "") or msg:find("teleport") then return end
 		task.wait(2)
 		queueReload()
-		-- rejoin Earth (public); reserved worlds can't be joined directly. The farm travels back afterwards.
+
 		pcall(TeleportService.Teleport, TeleportService, EARTH)
 	end))
 end)
 
--- ===== bosses: skills, dodging, retreat =====
--- Ki skills = the game's "Energy" tab (ClientSkillLookUp.Beams + .Energy); .Combat (melee) is never used
 local SKILL_LOOKUP = RS.Skills.Client.ClientSkillLookUp
-local skillHow = {} -- key -> how the game fires it (read from its client module), false = not a Ki skill
+local skillHow = {}
 local function howToCast(key)
 	if skillHow[key] ~= nil then return skillHow[key] end
 	local mod
 	for _, cat in ipairs({ "Beams", "Energy" }) do mod = mod or SKILL_LOOKUP:FindFirstChild(cat) and SKILL_LOOKUP[cat]:FindFirstChild(key) end
 	if not mod then skillHow[key] = false return false end
 	local ok, src = pcall(decompile, mod)
-	local how = { cast = true } -- default: CastSkill {Key=...} (beams and the generic energy skills)
+	local how = { cast = true }
 	if ok and type(src) == "string" then
 		local q = '"' .. key:gsub("%p", "%%%0") .. '"'
 		for _, stage in ipairs({ "Start", "Run", "charge" }) do
@@ -363,7 +341,7 @@ local function fireSkill(key, how, root, targetPos)
 	if how.cast then pcall(Network.FireServer, Network, "CastSkill", { Key = key })
 	elseif how.plain then pcall(Network.FireServer, Network, key)
 	else pcall(Network.FireServer, Network, key, how.stage) end
-	if how.fire then -- charge-then-release skills (Death Beam, Big Bang Attack)
+	if how.fire then
 		task.delay(0.8, function()
 			local aim = how.fireCF and CFrame.lookAt(root.Position, targetPos) or targetPos
 			pcall(Network.FireServer, Network, key, how.fire, aim)
@@ -372,7 +350,7 @@ local function fireSkill(key, how, root, targetPos)
 end
 
 local nextSkill, skillIdx, retreatSince, nextLock = 0, 0, nil, 0
--- each skill's Tool (Backpack or equipped) has Key and CooldownTime (server time it is ready again; -1 while in use)
+
 local function kiSkillTools()
 	local list = {}
 	for _, where in ipairs({ LP:FindFirstChild("Backpack"), LP.Character }) do
@@ -387,14 +365,14 @@ end
 local function castNextSkill(now, root, targetPos)
 	if now < nextSkill then return end
 	local tools = kiSkillTools()
-	for _, t in ipairs(tools) do if t:GetAttribute("CooldownTime") == -1 then return end end -- one is still running
+	for _, t in ipairs(tools) do if t:GetAttribute("CooldownTime") == -1 then return end end
 	local serverNow = workspace:GetServerTimeNow()
 	for _ = 1, #tools do
 		skillIdx = skillIdx % #tools + 1
 		local t = tools[skillIdx]
 		local cd = t:GetAttribute("CooldownTime")
 		if cd == nil or (cd ~= -1 and cd <= serverNow) then
-			nextSkill = now + 0.3 -- give the server time to mark it as in use
+			nextSkill = now + 0.3
 			local key = t:GetAttribute("Key")
 			fireSkill(key, howToCast(key), root, targetPos)
 			return
@@ -402,15 +380,13 @@ local function castNextSkill(now, root, targetPos)
 	end
 end
 
--- every boss (weekly boss list + event bosses), used by "Kill Bosses While Farming" and the Spawned list
 local BOSS_NAMES = { "Gogeta", "Janemba", "Brola", "Piccolo", "Goku", "Carl", "Beast", "Guz", "Maz", "Garuri", "Fluffy Knight",
 	"Corruptkin", "Corruptkin Ablaze", "Pumpkin Monstrosity", "Reaper" }
 local BOSS_SET = {}
 for _, n in ipairs(BOSS_NAMES) do BOSS_SET[n] = true end
 
--- ki blasts from range; against bosses also orbit, chain skills and retreat on low health
 local function rangedAttack(root, state, m, now, boss)
-	-- already locked onto another living boss: attack that one so the lock and the aim agree
+
 	local lt = boss and state and state:FindFirstChild("LockedTarget")
 	local lockedModel = lt and lt.Value and lt.Value.Parent
 	if lockedModel and lockedModel ~= m and BOSS_SET[lockedModel.Name] and hp(lockedModel) then m = lockedModel end
@@ -427,8 +403,7 @@ local function rangedAttack(root, state, m, now, boss)
 			S.hold = CFrame.new(m:GetPivot().Position + Vector3.new(150, 120, 150))
 			return ("retreating (%d%% HP)"):format(pct)
 		end
-		-- lock on so the game aims at the boss: tell the input machine the exact target (what X does, minus
-		-- the toggle and the "must be on camera" check)
+
 		if now > nextLock then
 			nextLock = now + 1
 			pcall(function()
@@ -449,8 +424,6 @@ local function rangedAttack(root, state, m, now, boss)
 	return (boss and "skills + Ki on " or "Ki blasts on ") .. m.Name
 end
 
--- ===== Halloween 2025 =====
--- claims challenges, fights event bosses, lights lanterns and smashes pumpkins (on Earth)
 local HW_BOSSES = { Corruptkin = true, ["Corruptkin Ablaze"] = true, ["Pumpkin Monstrosity"] = true, Reaper = true }
 local HW_KEYS = { "FindLanterns", "EventSkill", "FindShop", "DragonBallWish", "DailyRewards", "EarnExp", "DefeatEnemies", "DestroyPumpkins",
 	"BannerRolls", "LightLanterns", "EvilPumpkins", "Corruptkin", "HellsEmissary", "AllChallenges", "WeekendLanterns", "WeekendCorruptkin", "WeekendPumpkins", "HarvestKing" }
@@ -464,7 +437,7 @@ local function halloweenStep(root, now, state)
 	end
 	if game.PlaceId ~= EARTH then S.status = "Halloween: travelling to Earth" travel(EARTH) return true end
 	local boss = findNPC(HW_BOSSES, root.Position)
-	if boss and boss.Name == "Pumpkin Monstrosity" then -- immune to Ki: melee only
+	if boss and boss.Name == "Pumpkin Monstrosity" then
 		setFast(false) stopCharge(state)
 		S.hold, S.attack = nil, boss
 		S.status = "Halloween: punching Pumpkin Monstrosity (Ki immune)"
@@ -474,7 +447,7 @@ local function halloweenStep(root, now, state)
 	local lanterns = workspace.Map:FindFirstChild("Lanterns")
 	for _, lamp in ipairs(lanterns and lanterns:GetChildren() or {}) do
 		local prox, rp = lamp:FindFirstChildWhichIsA("ProximityPrompt", true), lamp:FindFirstChild("RootPart")
-		-- disabled prompt = on cooldown; lamps that don't light after 4 tries are skipped for 10 min (10 lamps, only 9 count)
+
 		if prox and prox.Enabled and rp and now > (lampSkip[lamp] or 0) then
 			setFast(false) stopCharge(state)
 			S.hold = CFrame.new(rp.Position + Vector3.new(0, 3, 4))
@@ -498,8 +471,6 @@ local function halloweenStep(root, now, state)
 	return false
 end
 
--- ===== quests =====
--- Daily: accepted automatically (RequestDailyQuest). Weeklies progress on their own; we just do them.
 local function questStep(root, now, state, have, dragonStep)
 	local ok, d = pcall(peek, QuestData.Data)
 	if not ok or type(d) ~= "table" then return false end
@@ -531,11 +502,11 @@ local function questStep(root, now, state, have, dragonStep)
 					local m = findNPC(names, root.Position)
 					if m then
 						waitSince[key] = nil
-						-- bosses (boss list or a "defeat X" of count 1, e.g. Carl): skills + dodging
+
 						S.status = ("Quest: %s - %s"):format(label, rangedAttack(root, state, m, now, boss or r.Count == 1))
 						return true
 					end
-					-- nothing alive: wait up to 60s for a respawn, then park this quest for 5 min
+
 					if not boss then
 						waitSince[key] = waitSince[key] or now
 						if now - waitSince[key] < 60 then
@@ -545,7 +516,7 @@ local function questStep(root, now, state, have, dragonStep)
 						end
 						waitSince[key], skipUntil[key] = nil, now + 300
 					end
-				elseif not boss then -- don't travel just for bosses that may not be there
+				elseif not boss then
 					S.status = ("Quest: %s - travelling"):format(label)
 					travel(place)
 					return true
@@ -554,7 +525,7 @@ local function questStep(root, now, state, have, dragonStep)
 				dragonStep("Quest Dragon Ball")
 				return true
 			elseif r.Type == "Flight" then
-				-- shortcut: circles with FastFlight on; not verified that the server counts this distance
+
 				stopCharge(state)
 				setFast(true)
 				flightAngle += 0.02
@@ -568,7 +539,6 @@ local function questStep(root, now, state, have, dragonStep)
 	return false
 end
 
--- ===== main farm step =====
 local transformingUntil = 0
 local function farmStep(char, root)
 	local now = os.clock()
@@ -576,19 +546,18 @@ local function farmStep(char, root)
 	S.hold = safeHold()
 	S.attack, S.ranged = nil, nil
 
-	-- transform BEFORE anything else (quests included); "Base" or "" = not transformed
 	if cfg.transform and state and now > nextTransform then
 		local sel, act = Stats:FindFirstChild("SelectedMode"), state:FindFirstChild("ActiveMode")
 		local base = function(v) return v == "" or v == "Base" end
 		if sel and not base(sel.Value) and act and base(act.Value) then
-			-- 3 failed tries in a row: back off 60s and keep farming instead of getting stuck
+
 			S.tfFails = (S.tfFails or 0) + 1
 			if S.tfFails > 3 then
 				S.tfFails, nextTransform = 0, now + 60
 			else
 				nextTransform, transformingUntil = now + 5, now + 3
-				stopCharge(state) setFast(false) -- the game blocks transforming while charging or fast flying
-				S.tfQuick = not S.tfQuick -- alternate Quick (N key) and Normal (B key) in case one fails
+				stopCharge(state) setFast(false)
+				S.tfQuick = not S.tfQuick
 				task.spawn(pcall, Network.InvokeServer, Network, "Transform", S.tfQuick and "Quick" or "Normal")
 			end
 		elseif act and not base(act.Value) then
@@ -620,7 +589,7 @@ local function farmStep(char, root)
 			end
 			S.status = label .. ": grabbing ball " .. tostring(ball:GetAttribute("BallNum"))
 		else
-			-- wait after arriving: lets the balls load and gives time to switch the finder off before the next hop
+
 			local left = 10 - (os.clock() - S.loadedAt)
 			if left > 0 then
 				S.status = ("%s: none here, hopping in %ds (turn off Dragon Ball Finder to stop)"):format(label, math.ceil(left))
@@ -680,11 +649,10 @@ local function farmStep(char, root)
 		end
 	end
 
-	-- a boss alive in this world: fight it, then go back to training (no travelling for bosses)
 	if cfg.bossFarm then
 		local boss = findNPC(BOSS_SET, root.Position)
 		if boss then
-			if boss.Name == "Pumpkin Monstrosity" then -- Ki immune
+			if boss.Name == "Pumpkin Monstrosity" then
 				stopCharge(state) setFast(false)
 				S.hold, S.attack = nil, boss
 				S.status = "Boss: punching Pumpkin Monstrosity"
@@ -702,7 +670,7 @@ local function farmStep(char, root)
 	if st == "Attack" or st == "Agility" then
 		stopCharge(state)
 		setFast(true)
-		pcall(Network.FireServer, Network, "Combat") -- every frame: the server gives a bit more than at 10/s
+		pcall(Network.FireServer, Network, "Combat")
 	else
 		setFast(false)
 		if not chargeIfNeeded(state, now) then
@@ -718,8 +686,6 @@ local function farmStep(char, root)
 	S.status = ("%s%s  %s / %s  (%d%% energy)"):format(S.charging and "Charging - " or "", NAMES[st], fmt(stat(st)), fmt(cap()), pct)
 end
 
--- ===== main loop =====
--- melee over the network (Combat + Hit): no key presses, so stuns don't break it
 local nextMelee = 0
 local function melee(m)
 	if not hp(m) or os.clock() < nextMelee then return end
@@ -753,7 +719,6 @@ task.spawn(function()
 	end
 end)
 
--- auto hop: on a crowded Earth server (> 6 players) with Prefer Small Servers on and stat farming off
 task.spawn(function()
 	while alive() do
 		task.wait(5)
@@ -762,13 +727,12 @@ task.spawn(function()
 			if best and (best:GetAttribute("plrCount") or 99) <= 3 then
 				S.status = ("Hopping to a small server (%d players)"):format(best:GetAttribute("plrCount"))
 				hopSmallest()
-				task.wait(60) -- give the teleport time; if it fails, try again later
+				task.wait(60)
 			end
 		end
 	end
 end)
 
---[[ ===================== UI ===================== ]]
 local C = {
 	bg = Color3.fromRGB(16, 16, 16), side = Color3.fromRGB(20, 20, 20), item = Color3.fromRGB(30, 30, 30),
 	box = Color3.fromRGB(42, 42, 42), accent = Color3.fromRGB(176, 8, 8), text = Color3.fromRGB(235, 235, 235),
@@ -783,7 +747,7 @@ end
 local function corner(o, r) new("UICorner", { CornerRadius = UDim.new(0, r or 8) }, o) end
 
 local guiParent = (gethui and gethui()) or game:GetService("CoreGui")
--- remove panels left behind by older copies (e.g. the old double load)
+
 for _, o in ipairs(guiParent:GetChildren()) do if o.Name == "DBRFarm" or o.Name == "DBRHub" or o.Name == "EzeHub" then o:Destroy() end end
 local gui = new("ScreenGui", { Name = "EzeHub", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, guiParent)
 S.gui = gui
@@ -792,7 +756,6 @@ local win = new("Frame", { Size = UDim2.fromOffset(640, 420), Position = UDim2.n
 corner(win, 10)
 new("UIStroke", { Color = Color3.fromRGB(45, 45, 45) }, win)
 
--- title bar (drag handle)
 local top = new("Frame", { Size = UDim2.new(1, 0, 0, 44), BackgroundTransparency = 1 }, win)
 new("TextLabel", {
 	Text = "Eze Hub | Version: " .. VERSION, Font = Enum.Font.GothamMedium, TextSize = 16, TextColor3 = C.text,
@@ -803,7 +766,7 @@ local closeBtn = new("TextButton", { Text = "✕", Font = Enum.Font.GothamBold, 
 local minBtn = new("TextButton", { Text = "—", Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = C.text, BackgroundTransparency = 1,
 	Size = UDim2.fromOffset(36, 36), Position = UDim2.new(1, -80, 0, 4) }, top)
 
-do -- dragging
+do
 	local dragging, start, startPos
 	top.InputBegan:Connect(function(i)
 		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
@@ -821,7 +784,6 @@ do -- dragging
 	end))
 end
 
--- minimized pill + RightControl to toggle
 local pill = new("TextButton", { Text = "Eze Hub", Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = C.text, BackgroundColor3 = C.accent,
 	Size = UDim2.fromOffset(110, 34), Position = UDim2.new(0, 16, 0.5, -17), Visible = false }, gui)
 corner(pill, 8)
@@ -832,7 +794,6 @@ table.insert(S.conns, UIS.InputBegan:Connect(function(i, gp)
 	if not gp and i.KeyCode == Enum.KeyCode.RightControl then setOpen(not win.Visible) end
 end))
 
--- sidebar + pages
 local side = new("Frame", { Size = UDim2.new(0, 170, 1, -56), Position = UDim2.fromOffset(12, 48), BackgroundTransparency = 1 }, win)
 new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, side)
 local pagesHolder = new("Frame", { Size = UDim2.new(1, -206, 1, -56), Position = UDim2.fromOffset(194, 48), BackgroundTransparency = 1 }, win)
@@ -966,12 +927,11 @@ local function Tab(name, icon)
 end
 
 local function cfgToggle(tab, text, key) tab.Toggle(text, function() return cfg[key] end, function(v) cfg[key] = v end) end
--- modes that move the character are exclusive with the pumpkin farm
+
 local function modeToggle(tab, text, key)
 	tab.Toggle(text, function() return cfg[key] end, function(v) cfg[key] = v if v then S.pumpkin = false end end)
 end
 
--- Home
 local home = Tab("Home", "⌂")
 home.Section("Status")
 home.Paragraph(function()
@@ -1017,7 +977,6 @@ end)
 home.Section("Info")
 home.Paragraph(function() return "Toggle the UI with <b>RightControl</b> or the minimize button.\nSettings are saved and the script reloads itself after teleports." end)
 
--- Farming
 local farming = Tab("Farming", "⚒")
 farming.Section("Stat Farm")
 modeToggle(farming, "Auto Farm Stats", "farm")
@@ -1030,13 +989,11 @@ cfgToggle(farming, "Teleport to Best World", "world")
 cfgToggle(farming, "Safe Farm (sky)", "safe")
 cfgToggle(farming, "Prefer Small Servers (Earth only)", "small")
 
--- Quests
 local quests = Tab("Quests", "☰")
 quests.Section("Quests")
 modeToggle(quests, "Auto Quests (daily + weekly)", "quests")
 modeToggle(quests, "Dragon Ball Finder", "dragon")
 
--- Event
 local event = Tab("Event", "✦")
 event.Section("Halloween")
 modeToggle(event, "Auto Halloween Event", "halloween")
@@ -1047,7 +1004,6 @@ event.Toggle("Pumpkin Farm", function() return S.pumpkin end, function(v)
 end)
 event.Paragraph(function() return "Lights lanterns, fights Corruptkin / Ablaze, smashes pumpkins and claims challenge rewards." end)
 
--- Combat
 local combat = Tab("Combat", "⚔")
 combat.Section("Bosses")
 cfgToggle(combat, "Use Ki Skills (no melee)", "skills")
@@ -1056,7 +1012,6 @@ combat.Section("Safe Mode")
 combat.Slider("Retreat at Health %", 10, 90, function() return cfg.retreatAt end, function(v) cfg.retreatAt = v end)
 combat.Slider("Back at Health %", 20, 100, function() return cfg.resumeAt end, function(v) cfg.resumeAt = v end)
 
--- Misc
 local misc = Tab("Misc", "⚙")
 misc.Section("Misc")
 cfgToggle(misc, "Anti-AFK", "antiAfk")
@@ -1074,7 +1029,7 @@ function S.Unload()
 	for _, c in ipairs(S.conns) do c:Disconnect() end
 	if S.gui then S.gui:Destroy() end
 end
--- closing stops everything (including auto-travel), not just hides the window
+
 closeBtn.MouseButton1Click:Connect(function()
 	cfg.farm, cfg.dragon, cfg.quests, cfg.halloween = false, false, false, false
 	saveCfg()
