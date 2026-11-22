@@ -2,6 +2,8 @@
 
 Roblox scripts.
 
+Discord: https://discord.gg/u9cDB4Vgw5 — want a script for your favourite game? Suggest it there.
+
 | Script | Game | Folder |
 |---|---|---|
 | Eze Hub | [Dragon Ball Rage](https://www.roblox.com/games/71315343/) | [`DBR`](DBR) |

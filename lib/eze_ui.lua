@@ -32,6 +32,7 @@ function library:Unload()
     local parent = get_ui_parent()
     if parent:FindFirstChild("MonolithUI") then parent.MonolithUI:Destroy() end
     if parent:FindFirstChild("MonolithNotifs") then parent.MonolithNotifs:Destroy() end
+    if parent:FindFirstChild("EzeDiscord") then parent.EzeDiscord:Destroy() end
 
     print("Monolith Library Unloaded Successfully")
 end
@@ -40,6 +41,7 @@ local function global_cleanup()
     local parent = get_ui_parent()
     if parent:FindFirstChild("MonolithUI") then parent.MonolithUI:Destroy() end
     if parent:FindFirstChild("MonolithNotifs") then parent.MonolithNotifs:Destroy() end
+    if parent:FindFirstChild("EzeDiscord") then parent.EzeDiscord:Destroy() end
 end
 
 global_cleanup()
@@ -1379,7 +1381,111 @@ do
     end
 end
 
+if props.discord ~= false then
+    task.delay(props.Loading and 5 or 1, function()
+        library:discord_prompt(props.discord)
+    end)
+end
+
 return win
+end
+
+library.discord = "https://discord.gg/u9cDB4Vgw5"
+
+function library:discord_prompt(invite)
+    invite = type(invite) == "string" and invite or library.discord
+    local genv = getgenv and getgenv() or _G
+    if genv.EzeDiscordShown then return end
+    genv.EzeDiscordShown = true
+
+    local copied = pcall(setclipboard or toclipboard, invite)
+
+    local screen = library:create("ScreenGui", {Parent = ui_parent, Name = "EzeDiscord", ResetOnSpawn = false, DisplayOrder = 999})
+    local shade = library:create("Frame", {
+        Parent = screen, Size = dim2(1, 0, 1, 0), BackgroundColor3 = rgb(0, 0, 0), BackgroundTransparency = 1, BorderSizePixel = 0
+    })
+    local card = library:create("CanvasGroup", {
+        Parent = screen, Size = dim2(0, 340, 0, 196), Position = dim2(0.5, 0, 0.5, 20), AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundColor3 = Theme.MainBG, BorderSizePixel = 0, GroupTransparency = 1
+    })
+    library:create("UICorner", {Parent = card, CornerRadius = dim(0, 10)})
+    library:create("UIStroke", {Parent = card, Color = Theme.Outline, Thickness = 1})
+    local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(800, 600)
+    library:create("UIScale", {Parent = card, Scale = math.min(1, (vp.X - 32) / 340)})
+
+    local blurple = rgb(88, 101, 242)
+    local band = library:create("Frame", {Parent = card, Size = dim2(1, 0, 0, 64), BackgroundColor3 = blurple, BorderSizePixel = 0})
+    library:create("UIGradient", {Parent = band, Rotation = 90, Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.55), NumberSequenceKeypoint.new(1, 1)
+    })})
+
+    local badge = library:create("Frame", {
+        Parent = card, Size = dim2(0, 40, 0, 40), Position = dim2(0, 16, 0, 16), BackgroundColor3 = blurple, BorderSizePixel = 0
+    })
+    library:create("UICorner", {Parent = badge, CornerRadius = dim(0, 10)})
+    local icon = get_icon("lucide:message-circle", Theme.Text)
+    if icon then icon.Size = dim2(0, 22, 0, 22); icon.Position = dim2(0.5, 0, 0.5, 0); icon.AnchorPoint = Vector2.new(0.5, 0.5); icon.Parent = badge end
+
+    library:create("TextLabel", {
+        Parent = card, Size = dim2(1, -120, 0, 22), Position = dim2(0, 66, 0, 16), BackgroundTransparency = 1,
+        Text = "Join our Discord server", TextColor3 = Theme.Text, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left,
+        FontFace = Font.new("rbxassetid://12187375716", Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+    })
+    library:create("TextLabel", {
+        Parent = card, Size = dim2(1, -120, 0, 18), Position = dim2(0, 66, 0, 38), BackgroundTransparency = 1,
+        Text = (invite:gsub("^https?://", "")), TextColor3 = rgb(170, 180, 255), TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Left, FontFace = library.font
+    })
+    library:create("TextLabel", {
+        Parent = card, Size = dim2(1, -32, 0, 40), Position = dim2(0, 16, 0, 74), BackgroundTransparency = 1,
+        Text = "Want a script for your favourite game? Suggest it in our server!", TextWrapped = true,
+        TextColor3 = Theme.MutedText, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Top, FontFace = library.font
+    })
+
+    local closeX = library:create("TextButton", {
+        Parent = card, Size = dim2(0, 26, 0, 26), Position = dim2(1, -36, 0, 10), BackgroundTransparency = 1,
+        Text = "×", TextColor3 = Theme.MutedText, TextSize = 22, FontFace = library.font, AutoButtonColor = false
+    })
+
+    local function button(text, x, w, primary)
+        local b = library:create("TextButton", {
+            Parent = card, Size = dim2(0, w, 0, 34), Position = dim2(0, x, 1, -50), AutoButtonColor = false,
+            BackgroundColor3 = primary and blurple or Theme.ElementBG, Text = text, TextColor3 = Theme.Text,
+            TextSize = 14, FontFace = library.font
+        })
+        library:create("UICorner", {Parent = b, CornerRadius = dim(0, 6)})
+        if not primary then library:create("UIStroke", {Parent = b, Color = Theme.Outline, Thickness = 1}) end
+        local base = b.BackgroundColor3
+        b.MouseEnter:Connect(function() library:tween(b, {BackgroundColor3 = primary and rgb(110, 122, 255) or Theme.HoverBG}, 0.15) end)
+        b.MouseLeave:Connect(function() library:tween(b, {BackgroundColor3 = base}, 0.15) end)
+        return b
+    end
+    local copyBtn = button(copied and "Copied ✓" or "Copy link", 16, 200, true)
+    local laterBtn = button("Later", 224, 100, false)
+
+    local closing = false
+    local function close()
+        if closing then return end
+        closing = true
+        library:tween(shade, {BackgroundTransparency = 1}, 0.25)
+        library:tween(card, {GroupTransparency = 1, Position = dim2(0.5, 0, 0.5, 20)}, 0.25).Completed:Connect(function() screen:Destroy() end)
+    end
+
+    copyBtn.MouseButton1Click:Connect(function()
+        if pcall(setclipboard or toclipboard, invite) then
+            copyBtn.Text = "Copied ✓"
+            library:create_notification({ name = "Discord invite copied to clipboard", duration = 3 })
+        else
+            copyBtn.Text = "Copy failed"
+        end
+    end)
+    laterBtn.MouseButton1Click:Connect(close)
+    closeX.MouseButton1Click:Connect(close)
+
+    library:tween(shade, {BackgroundTransparency = 0.6}, 0.3)
+    library:tween(card, {GroupTransparency = 0, Position = dim2(0.5, 0, 0.5, 0)}, 0.35)
+    task.delay(20, close)
 end
 
 function library:create_notification(props)
