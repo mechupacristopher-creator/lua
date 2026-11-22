@@ -1,4 +1,4 @@
-local VERSION = "1.5.2"
+local VERSION = "1.5.4"
 local CFG_FILE = "ssp_aim_cfg.json"
 
 local G = getgenv()
@@ -417,7 +417,7 @@ local function keeperStep(now)
 	if now - (S.worldCheck or 0) > 2 or not S.world then S.worldCheck = now findWorld() end
 	local w = S.world
 	if not w then S.gkMove = nil return end
-	local ok = pcall(function()
+	local ok, err = pcall(function()
 		local me = myEntity(w)
 		S.isKeeper = me ~= nil and w:has(me, Comp.GOALKEEPER)
 		if not S.isKeeper or not (cfg.save or cfg.gkPosition) then
@@ -435,7 +435,9 @@ local function keeperStep(now)
 		for e in w:query(Comp.FOOTBALL) do ball = e break end
 		if not ball then S.gkMove = nil return end
 		local bp, bv, bs = Present.now(w, ball)
-		if not bp then return end
+
+		if not bp then bp, bv, bs = ballPos(), Vector3.zero, Vector3.zero end
+		if not bp then S.gkMove, S.gkStatus = nil, "Can't find the ball" return end
 		bv, bs = bv or Vector3.zero, bs or Vector3.zero
 		local holder = w:target(ball, Comp.HELD_BY, 0)
 		local towardGoal = (goal.X - bp.X) * bv.X > 0 and bv.Magnitude > 12
@@ -467,29 +469,16 @@ local function keeperStep(now)
 		local lineX = goal.X - math.sign(goal.X) * depth
 		local k = (lineX - bp.X) / (goal.X - bp.X)
 		local coverZ = bp.Z + (0 - bp.Z) * math.clamp(k, 0, 1)
-		if holder then
-			local hm
-			for _, m in ipairs(humanoids()) do
-				if ((m:GetPivot().Position - bp) * Vector3.new(1, 0, 1)).Magnitude < 3.5 then hm = m break end
-			end
-			if hm and isEnemy(hm) ~= false then
-				local lv = hm:GetPivot().LookVector
-				if math.abs(lv.X) > 0.05 and (goal.X - bp.X) * lv.X > 0 then
-					local faceZ = bp.Z + lv.Z * (lineX - bp.X) / lv.X
-					coverZ = coverZ * 0.5 + math.clamp(faceZ, -HALF_W, HALF_W) * 0.5
-				end
-			end
-		end
 		coverZ = math.clamp(coverZ, -(HALF_W - 1.5), HALF_W - 1.5)
 		local target = Vector3.new(lineX, mePos.Y, coverZ)
 		local to = (target - mePos) * Vector3.new(1, 0, 1)
 		S.gkMove = to.Magnitude > 0.8 and to.Unit * math.clamp(to.Magnitude / 4, 0.35, 1) or nil
 		S.gkStatus = ("Positioning: covering z %.1f"):format(coverZ)
 	end)
-	if not ok then S.gkMove = nil end
+	if not ok then S.gkMove, S.gkStatus = nil, "Keeper error: " .. tostring(err) end
 end
 
-local HOOKED = { Look.kick, Look.aim, Look.camera, Power.curve, Power.bend, Shot.fire, KickLead.aim, Actions.pressed, Control.move }
+local HOOKED = { Look.kick, Look.aim, Look.camera, Power.curve, Power.bend, Shot.fire, KickLead.aim, Actions.pressed, Control.move, Control.throttle }
 if restorefunction and isfunctionhooked then
 	for _, f in ipairs(HOOKED) do
 		if isfunctionhooked(f) then pcall(restorefunction, f) end
@@ -567,6 +556,14 @@ do
 		local s = st()
 		if steering(s) then return s.tackleDir end
 		if s and s.gkMove and (typeof(r) ~= "Vector3" or r.Magnitude < 0.1) then return s.gkMove end
+		return r
+	end)
+
+	local oldThrottle
+	oldThrottle = hookfunction(Control.throttle, function(...)
+		local r = oldThrottle(...)
+		local s = st()
+		if s and s.gkMove and (type(r) ~= "number" or r < 0.1) then return math.min(s.gkMove.Magnitude, 1) end
 		return r
 	end)
 	local oldCamera
@@ -2187,7 +2184,7 @@ liveLabel(tack, function() return S.tackleStatus or "Locks onto the ball carrier
 local gkTab = win:Tab({ name = "Keeper", icon = "lucide:shield" })
 local gk = gkTab:Section({ name = "Auto Keeper", side = "left" })
 toggle(gk, "Auto Save (dive)", "save")
-toggle(gk, "Auto Position", "gkPosition")
+toggle(gk, "Auto Position (experimental)", "gkPosition")
 gk:Label({ name = "Works when you're the goalkeeper. Dives at the last moment toward where the ball (curve included) will cross your line." })
 local gkStat = gkTab:Section({ name = "Status", side = "right" })
 liveLabel(gkStat, function() return S.gkStatus or "Waiting" end)
