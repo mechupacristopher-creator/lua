@@ -1,4 +1,4 @@
-local VERSION = "1.3.1"
+local VERSION = "1.3.2"
 local CFG_FILE = "ssp_aim_cfg.json"
 
 local G = getgenv()
@@ -28,13 +28,17 @@ local VStrike = require(RS.shared.play.volley_strike)
 if setthreadidentity then pcall(setthreadidentity, 8) end
 
 local cfg = {
-	aim = false, curve = true, height = "Auto", showTarget = false, range = 220, margin = 2,
+	aim = false, curve = true, height = "Auto", showTarget = false, range = 220, margin = 2.2,
 	volley = false, dribble = false, dribbleRange = 10, tackle = false, tackleRange = 8,
 }
 pcall(function() for k, v in pairs(Http:JSONDecode(readfile(CFG_FILE))) do cfg[k] = v end end)
 local function saveCfg() pcall(writefile, CFG_FILE, Http:JSONEncode(cfg)) end
 if (cfg.cfgVersion or 0) < 2 then
 	cfg.range, cfg.cfgVersion = math.max(cfg.range or 0, 220), 2
+	saveCfg()
+end
+if cfg.cfgVersion < 3 then
+	cfg.margin, cfg.cfgVersion = math.max(cfg.margin or 0, 2.2), 3
 	saveCfg()
 end
 
@@ -194,10 +198,13 @@ local function pickGoal(ball)
 end
 
 local function corners(ball, gx, keeper)
-	local zs = { HALF_W - cfg.margin, -(HALF_W - cfg.margin) }
+
+	local bias = G.SSPAimBias or { y = 0, z = 0 }
+	local zIn = math.clamp(HALF_W - cfg.margin - bias.z, HALF_W - 5, HALF_W - 1.6)
+	local zs = { zIn, -zIn }
 	local ys = {}
-	if cfg.height ~= "Low" then table.insert(ys, BAR - 1.6) end
-	if cfg.height ~= "High" then table.insert(ys, 1.6) end
+	if cfg.height ~= "Low" then table.insert(ys, math.clamp(BAR - 2 - bias.y, BAR - 4, BAR - 1.4)) end
+	if cfg.height ~= "High" then table.insert(ys, math.clamp(1.6 - bias.y, 1.1, 3.5)) end
 	local list = {}
 	local kp
 	if keeper then
@@ -474,6 +481,15 @@ table.insert(S.conns, RunService.Heartbeat:Connect(function(dt)
 						local a = (sol.target.X - prev.X) / (p.X - prev.X)
 						local hit = prev + (p - prev) * a
 						S.last = ("Last shot: target z %.1f y %.1f | crossed z %.1f y %.1f"):format(sol.target.Z, sol.target.Y, hit.Z, hit.Y)
+
+						local ey = hit.Y - sol.target.Y
+						local ez = math.abs(hit.Z) - math.abs(sol.target.Z)
+						if math.abs(ey) < 3 and math.abs(ez) < 4 then
+							local b = G.SSPAimBias or { y = 0, z = 0 }
+							b.y = math.clamp(b.y * 0.7 + ey * 0.3, -1.5, 1.5)
+							b.z = math.clamp(b.z * 0.7 + ez * 0.3, -2, 2)
+							G.SSPAimBias = b
+						end
 						break
 					end
 					prev = p
