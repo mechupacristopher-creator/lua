@@ -8,7 +8,7 @@ Silent aim and auto play hub for [Street Soccer Pro](https://www.roblox.com/game
 loadstring(game:HttpGet("https://raw.githubusercontent.com/mechupacristopher-creator/lua/main/SSP/ssp_hub.lua"))()
 ```
 
-Toggle the panel with **RightControl** or the minimize button.
+Toggle the panel with **RightControl** or the minimize button. The **UI Settings** tab lets you change colors, the toggle key, opacity and add floating buttons for mobile.
 
 ## Features
 
