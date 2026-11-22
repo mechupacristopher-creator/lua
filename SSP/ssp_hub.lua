@@ -1,4 +1,4 @@
-local VERSION = "1.5.4"
+local VERSION = "1.6.0"
 local CFG_FILE = "ssp_aim_cfg.json"
 
 local G = getgenv()
@@ -154,27 +154,69 @@ local function volleyLaunch(m, side)
 	end
 end
 
-local function focusOf(uid)
-	local f = workspace.focus:FindFirstChild(tostring(uid))
-	return f and f.Position
+local function findWorld()
+	local w = S.world
+	if w then
+		local ok, has = pcall(function() for _ in w:query(Comp.CHARACTER) do return true end end)
+		if ok and has then return w end
+	end
+	S.world = nil
+	if os.clock() - (S.worldScanAt or 0) < 3 then return nil end
+	S.worldScanAt = os.clock()
+	local fallback
+	for _, t in ipairs(getgc(true)) do
+		if type(t) == "table" and rawget(t, "entity_index") ~= nil and rawget(t, "query") ~= nil then
+			local ok, ball, char = pcall(function()
+				local b, c = false, false
+				for _ in t:query(Comp.FOOTBALL) do b = true break end
+				for _ in t:query(CComp.OWNED) do c = true break end
+				return b, c
+			end)
+			if ok and char then
+				if ball then S.world = t return t end
+				fallback = fallback or t
+			end
+		end
+	end
+	S.world = fallback
+	return fallback
 end
 
-local function teamOf(model)
-	local p = model:GetPivot().Position
-	local best, bd
-	for _, f in ipairs(workspace.focus:GetChildren()) do
-		local d = (f.Position - p).Magnitude
-		if d < 5 and (not bd or d < bd) then best, bd = f, d end
+local function myEntity(w)
+	for e in w:query(CComp.OWNED) do
+		if w:has(e, Comp.CHARACTER) then return e end
 	end
-	local pl = best and Players:GetPlayerByUserId(tonumber(best.Name) or 0)
-	return pl, pl and pl.Team
+end
+
+local function entPos(w, e)
+	return w:get(e, CComp.render_position) or w:get(e, Comp.position)
+end
+
+local function myPos()
+	local w = findWorld()
+	if not w then return nil end
+	local me = myEntity(w)
+	return me and entPos(w, me), me, w
 end
 
 local function isEnemy(model)
-	local pl, team = teamOf(model)
-	if pl == LP then return false end
-	if team == nil or LP.Team == nil then return nil end
-	return team ~= LP.Team
+	local w = S.world
+	if not w then return nil end
+	local p = model:GetPivot().Position
+	local best, bd
+	for e in w:query(Comp.CHARACTER) do
+		local q = entPos(w, e)
+		if q then
+			local d = ((q - p) * Vector3.new(1, 0, 1)).Magnitude
+			if d < 4 and (not bd or d < bd) then best, bd = e, d end
+		end
+	end
+	if not best then return nil end
+	local me = myEntity(w)
+	if best == me then return false end
+	local ms, es = me and w:get(me, Comp.side), w:get(best, Comp.side)
+	if ms and es then return ms ~= es end
+	return nil
 end
 
 local function humanoids()
@@ -391,32 +433,10 @@ local function interceptDir(me, target, vel)
 	return nil
 end
 
-local function findWorld()
-	local w = S.world
-	if w then
-		local ok, has = pcall(function() for _ in w:query(Comp.FOOTBALL) do return true end end)
-		if ok and has then return w end
-	end
-	S.world = nil
-	for _, t in ipairs(getgc(true)) do
-		if type(t) == "table" and rawget(t, "entity_index") ~= nil and rawget(t, "query") ~= nil then
-			local ok, has = pcall(function() for _ in t:query(Comp.FOOTBALL) do return true end end)
-			if ok and has then S.world = t return t end
-		end
-	end
-end
-
-local function myEntity(w)
-	for e in w:query(CComp.OWNED) do
-		if w:has(e, Comp.CHARACTER) then return e end
-	end
-end
-
 local function keeperStep(now)
 	if not (cfg.save or cfg.gkPosition or cfg.tackle) then S.gkMove, S.isKeeper = nil, false return end
-	if now - (S.worldCheck or 0) > 2 or not S.world then S.worldCheck = now findWorld() end
-	local w = S.world
-	if not w then S.gkMove = nil return end
+	local w = findWorld()
+	if not w then S.gkMove, S.gkStatus = nil, "Game data not found yet" return end
 	local ok, err = pcall(function()
 		local me = myEntity(w)
 		S.isKeeper = me ~= nil and w:has(me, Comp.GOALKEEPER)
@@ -426,14 +446,14 @@ local function keeperStep(now)
 			return
 		end
 		local side = w:get(me, Comp.side)
-		if side ~= Match.WEST and side ~= Match.EAST then S.gkMove = nil return end
-		local mePos = focusOf(LP.UserId)
-		if not mePos then return end
+		if side ~= Match.WEST and side ~= Match.EAST then S.gkMove, S.gkStatus = nil, "Not in a match (no team side)" return end
+		local mePos = entPos(w, me)
+		if not mePos then S.gkMove, S.gkStatus = nil, "Can't read your position" return end
 		local goal = Match.goal_of(side)
 		local depth = math.clamp(math.abs(mePos.X - goal.X), 0.5, 12)
 		local ball
 		for e in w:query(Comp.FOOTBALL) do ball = e break end
-		if not ball then S.gkMove = nil return end
+		if not ball then S.gkMove, S.gkStatus = nil, "No ball on the pitch" return end
 		local bp, bv, bs = Present.now(w, ball)
 
 		if not bp then bp, bv, bs = ballPos(), Vector3.zero, Vector3.zero end
@@ -464,7 +484,7 @@ local function keeperStep(now)
 			end
 			return
 		end
-		if not cfg.gkPosition then S.gkMove = nil return end
+		if not cfg.gkPosition then S.gkMove, S.gkStatus = nil, "Ready - waiting for a shot" return end
 
 		local lineX = goal.X - math.sign(goal.X) * depth
 		local k = (lineX - bp.X) / (goal.X - bp.X)
@@ -595,7 +615,7 @@ table.insert(S.conns, RunService.Heartbeat:Connect(function(dt)
 		else S.track[m] = { pos = p, vel = Vector3.zero } end
 	end
 	if cfg.dribble and os.clock() - (S.lastDrib or 0) > 0.25 then
-		local me, ball = focusOf(LP.UserId), ballPos()
+		local me, ball = myPos(), ballPos()
 		if me and ball and (ball - me).Magnitude < 4.5 then
 			for _, m in ipairs(humanoids()) do
 				if isEnemy(m) ~= false then
@@ -615,7 +635,7 @@ table.insert(S.conns, RunService.Heartbeat:Connect(function(dt)
 		end
 	end
 	do
-		local me = focusOf(LP.UserId)
+		local me = myPos()
 		if me then
 			local prev = S.mePos
 			S.meVel = prev and (S.meVel or Vector3.zero):Lerp((me - prev) / math.max(dt, 1 / 240), 0.3) or Vector3.zero
