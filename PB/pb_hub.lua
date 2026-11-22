@@ -1,4 +1,4 @@
-local VERSION = "1.3.0"
+local VERSION = "1.4.0"
 local CFG_FILE = "pg_hub_cfg.json"
 
 local G = getgenv()
@@ -19,20 +19,20 @@ local ShootRemote = Remotes.InputService.Shoot
 local MeterSvc = Remotes.MeterService
 
 local cfg = {
-	green = false, timingMs = 0, fullSteps = 24, autoCal = false, meterCal = {},
+	green = false, timingMs = 0, stepsPerSpeed = 13.33, autoCal = false, meterCal2 = {},
 	speed = false, speedMult = 1.3, infStamina = false, alwaysSprint = false,
 	magnet = false, magnetRange = 25,
 	autoShoot = false, shootRange = 25, antiContest = false, openDist = 6,
 	dribbleGlide = false, gatherGlide = false, shotGlide = false, glideSpeed = 14,
 	ankle = false, ankleRange = 12, combo = "Crossover, Spin, StepBack", loopCombo = false,
 	block = false, blockRange = 15, blockDelay = 170, steal = false, stealRange = 6,
-	guard = false, guardHoldG = false, guardSprint = false, guardDist = 4, guardCreep = 25, guardReaction = 0,
+	guard = false, guardHoldG = false, guardMode = "Tight", guardDist = 4, guardCreep = 25,
 	selfLob = false, lobRange = 15,
 	fov = false, fovValue = 80, fullbright = false, noPost = false, antiAfk = false,
 }
 pcall(function() for k, v in pairs(Http:JSONDecode(readfile(CFG_FILE))) do cfg[k] = v end end)
 for _, k in ipairs({ "green", "speed", "infStamina", "alwaysSprint", "magnet", "autoShoot", "dribbleGlide", "gatherGlide", "shotGlide", "ankle", "loopCombo", "block", "steal", "guard", "selfLob", "fov", "fullbright", "noPost", "antiAfk" }) do cfg[k] = false end
-if type(cfg.meterCal) ~= "table" then cfg.meterCal = {} end
+if type(cfg.meterCal2) ~= "table" then cfg.meterCal2 = {} end
 local function saveCfg() pcall(writefile, CFG_FILE, Http:JSONEncode(cfg)) end
 
 local S = { conns = {}, status = "Idle", last = "No shot yet", cfg = cfg }
@@ -41,6 +41,43 @@ local function alive() return G.PGHub == S end
 local function conn(c) table.insert(S.conns, c) return c end
 
 local function myChar() return workspace.Characters:FindFirstChild(LP.Name) end
+
+local CharCtrl
+for _, t in ipairs(getgc(true)) do
+	if type(t) == "table" and type(rawget(t, "Get")) == "function" and type(rawget(t, "loadCharacter")) == "function" then
+		CharCtrl = t
+		break
+	end
+end
+
+local function A(model, key)
+	if not model then return nil end
+	if CharCtrl then
+		local ok, map = pcall(CharCtrl.Get, CharCtrl)
+		local st = ok and map and map[model]
+		if st and st.attributes and st.attributes[key] ~= nil then return st.attributes[key] end
+	end
+	return model:GetAttribute(key)
+end
+
+local function hasBall(model)
+	local b = A(model, "Basketball")
+	return b ~= nil and b ~= false
+end
+
+local function charModels()
+	if CharCtrl then
+		local ok, map = pcall(CharCtrl.Get, CharCtrl)
+		if ok and type(map) == "table" then
+			local list = {}
+			for model in pairs(map) do
+				if typeof(model) == "Instance" and model.Parent then list[#list + 1] = model end
+			end
+			return list
+		end
+	end
+	return workspace.Characters:GetChildren()
+end
 
 local pingMs = 60
 local function readPing()
@@ -73,7 +110,7 @@ local function release(reason, est, lead)
 end
 
 local function leadMs(meterType)
-	return readPing() * 0.4 + cfg.timingMs + (cfg.meterCal[meterType or ""] or 0)
+	return readPing() * 0.4 + cfg.timingMs + (cfg.meterCal2[meterType or ""] or 0)
 end
 S.leadMs = leadMs
 
@@ -81,7 +118,8 @@ local function check()
 	if not shot or shot.released or not shot.rate then return end
 	local est = shot.prev + shot.rate * (os.clock() - shot.tprev)
 	local lead = math.max(leadMs(shot.meterType), 0) / 1000
-	local full = shot.m0 + cfg.fullSteps * shot.rate / 60
+	shot.speed = shot.speed or tonumber(A(myChar(), "ShotSpeed")) or 1.8
+	local full = shot.m0 + cfg.stepsPerSpeed * shot.speed * shot.rate / 60
 	shot.full = full
 	if (full - est) / shot.rate <= lead then release("Auto release", est, lead) end
 end
@@ -103,11 +141,11 @@ local function logShot(s, timing, contest)
 	local samples = {}
 	for _, p in ipairs(s.samples) do samples[#samples + 1] = string.format("%.0f:%.3f", p[1] * 1000, p[2]) end
 	dbg(string.format(
-		"SHOT type=%s win=%s result=%s contest=%s%% green=%s | release=%s at %s ms (est %.3f / full %.3f, lead %s ms, ping %.0f, offset %d) | rate=%s | userReleaseBlocked=%d | %s",
+		"SHOT type=%s win=%s result=%s contest=%s%% green=%s | release=%s at %s ms (est %.3f / full %.3f, lead %s ms, ping %.0f, offset %d) | rate=%s speed=%s | userReleaseBlocked=%d | %s",
 		tostring(s.meterType), tostring(s.win), timing and TIMING[timing] or "none", tostring(contest), tostring(s.green or false),
 		tostring(s.reason or "none"), s.relT and string.format("%.0f", s.relT * 1000) or "-",
 		s.relEst or -1, s.full or -1, s.relLead and string.format("%.0f", s.relLead * 1000) or "-", s.relPing or pingMs, cfg.timingMs,
-		s.rate and string.format("%.3f/s", s.rate) or "-", s.blocked, why))
+		s.rate and string.format("%.3f/s", s.rate) or "-", tostring(s.speed), s.blocked, why))
 	dbg("  samples(ms:offset) " .. table.concat(samples, " "))
 end
 
@@ -119,7 +157,7 @@ local function onOffset(char)
 	local mag = math.max(math.abs(o.X), math.abs(o.Y))
 	if DEBUG then table.insert(shot.samples, { now - shot.t0, mag }) end
 	if shot.prev and mag < shot.prev - 1e-3 then
-		if shot.steps and shot.steps >= 15 then cfg.fullSteps = shot.steps end
+		if shot.steps and shot.speed and shot.steps >= 10 and math.abs(shot.steps / shot.speed - cfg.stepsPerSpeed) < 3 then cfg.stepsPerSpeed = cfg.stepsPerSpeed + (shot.steps / shot.speed - cfg.stepsPerSpeed) * 0.3 end
 		release("Meter peaked (late)")
 		return
 	end
@@ -161,9 +199,9 @@ conn(IF.ShowFeedback.OnClientEvent:Connect(function(model, contest, timing)
 		S.last = TIMING[timing] .. (s.relLead and string.format(" - %.0f ms before the top", s.relLead * 1000) or "")
 		if cfg.autoCal and s.relT and s.reason == "Auto release" and timing ~= 5 then
 			local key = s.meterType or ""
-			local cur = cfg.meterCal[key] or 0
+			local cur = cfg.meterCal2[key] or 0
 			cur = math.clamp(cur + (timing - 5) * 3, -80, 80)
-			cfg.meterCal[key] = cur
+			cfg.meterCal2[key] = cur
 			s.calMs = cur
 			saveCfg()
 		end
@@ -176,7 +214,7 @@ end))
 conn(IF.RunGreenEffect.OnClientEvent:Connect(function(model)
 	if model == LP.Name or model == myChar() or model == LP then lastGreenT = os.clock() end
 end))
-dbg("---- loaded v" .. VERSION .. " ping " .. math.floor(readPing()) .. " offset " .. cfg.timingMs .. " fullSteps " .. cfg.fullSteps)
+dbg("---- loaded v" .. VERSION .. " ping " .. math.floor(readPing()) .. " offset " .. cfg.timingMs .. " stepsPerSpeed " .. cfg.stepsPerSpeed)
 if myChar() then watchChar(myChar()) end
 conn(workspace.Characters.ChildAdded:Connect(function(c) if c.Name == LP.Name then watchChar(c) end end))
 
@@ -242,7 +280,7 @@ conn(RunService.Stepped:Connect(function()
 	end
 	local char = myChar()
 	if not char then return end
-	local glideKey = GLIDE[char:GetAttribute("Action") or ""]
+	local glideKey = GLIDE[A(char, "Action") or ""]
 	if glideKey and cfg[glideKey] then
 		local d = moveInput()
 		if d then
@@ -253,14 +291,26 @@ conn(RunService.Stepped:Connect(function()
 	end
 	if not char:GetAttribute("CanMove") then return end
 	local ws = math.min(char:GetAttribute("WalkSpeed") or 14, 14)
-	if S.guardTarget and not moveInput() then
-		local off = (S.guardTarget - Proxy.Position) * Vector3.new(1, 0, 1)
-		if off.Magnitude > 0.6 then
-			local spd = math.min(off.Magnitude * 4, ws + (cfg.guardSprint and 3.35 or 0)) * (cfg.speed and cfg.speedMult or 1)
-			bv.Velocity = off.Unit * spd
+	local gTarget, gHandler, gVel
+	if S.computeGuard then gTarget, gHandler, gVel = S.computeGuard() end
+	S.guardTarget = gTarget
+	if gTarget and not moveInput() then
+		local off = (gTarget - Proxy.Position) * Vector3.new(1, 0, 1)
+		local face = gHandler.HumanoidRootPart.Position * Vector3.new(1, 0, 1) + Vector3.new(0, gTarget.Y, 0)
+		if cfg.guardMode == "Blatant" then
+			Proxy.CFrame = CFrame.new(gTarget, face)
+			local bp = Proxy:FindFirstChild("BodyPosition")
+			if bp then bp.Position = gTarget end
+			bv.Velocity = gVel
 		else
-			bv.Velocity = Vector3.zero
+			local cap = (ws + 3.35) * 1.3 * (cfg.speed and cfg.speedMult or 1)
+			local chase = off.Magnitude > 0.3 and off.Unit * math.min(off.Magnitude * 12, cap) or Vector3.zero
+			local v = gVel + chase
+			if v.Magnitude > cap then v = v.Unit * cap end
+			bv.Velocity = v
 		end
+		local gyro = Proxy:FindFirstChild("MovementGyro")
+		if gyro and (face - gTarget).Magnitude > 0.1 then gyro.CFrame = CFrame.new(gTarget, face) end
 		return
 	end
 	local mult = cfg.speed and cfg.speedMult or 1
@@ -286,7 +336,7 @@ end
 task.spawn(function()
 	while alive() do
 		local char = myChar()
-		if cfg.magnet and not rush and char and not char:GetAttribute("Basketball") and (char:GetAttribute("Action") or "") == "" then
+		if cfg.magnet and not rush and char and not hasBall(char) and (A(char, "Action") or "") == "" then
 			local b = looseBall(Proxy.Position)
 			if b then
 				local ballFlat = Vector3.new(b.Position.X, Proxy.Position.Y, b.Position.Z)
@@ -345,11 +395,11 @@ local function playCombo()
 		repeat
 			for _, m in ipairs(parseCombo()) do
 				local char = myChar()
-				if not alive() or not char or not char:GetAttribute("Basketball") then break end
+				if not alive() or not char or not hasBall(char) then break end
 				doMove(m)
 				task.wait(0.5)
 			end
-		until not (cfg.loopCombo and alive() and myChar() and myChar():GetAttribute("Basketball"))
+		until not (cfg.loopCombo and alive() and myChar() and hasBall(myChar()))
 		comboRunning = false
 	end)
 end
@@ -357,11 +407,11 @@ S.playCombo = playCombo
 
 local function others()
 	local me = myChar()
-	local myTeam = me and me:GetAttribute("Team") or 0
+	local myTeam = me and A(me, "Team") or 0
 	local list = {}
-	for _, c in ipairs(workspace.Characters:GetChildren()) do
+	for _, c in ipairs(charModels()) do
 		if c ~= me and c.Name ~= "InvisCharacter" and c:FindFirstChild("HumanoidRootPart") then
-			local t = c:GetAttribute("Team")
+			local t = A(c, "Team")
 			if myTeam == 0 or t ~= myTeam then list[#list + 1] = c end
 		end
 	end
@@ -393,15 +443,19 @@ end
 
 local lastShootT, lastAnkleT, lastStealT = 0, 0, 0
 local blockedShots = setmetatable({}, { __mode = "k" })
+local fakeLogged = setmetatable({}, { __mode = "k" })
+local meterSeen = setmetatable({}, { __mode = "k" })
+conn(MeterSvc.RegisterPacket.OnClientEvent:Connect(function(model) if typeof(model) == "Instance" then meterSeen[model] = os.clock() end end))
+conn(Remotes.GameplayService.Meter.OnClientEvent:Connect(function(on, model) if on and typeof(model) == "Instance" then meterSeen[model] = os.clock() end end))
 task.spawn(function()
 	while alive() do
 		local me = myChar()
 		local now = os.clock()
 		if me then
 			local pos = Proxy.Position
-			local action = me:GetAttribute("Action") or ""
-			local hasBall = me:GetAttribute("Basketball")
-			if hasBall and action == "" then
+			local action = A(me, "Action") or ""
+			local iHave = hasBall(me)
+			if iHave and action == "" then
 				local opp, od = nearestOpp(pos)
 				if cfg.autoShoot and now - lastShootT > 1.5 then
 					local _, gd = nearestGoal(pos)
@@ -418,23 +472,28 @@ task.spawn(function()
 					doMove(pick)
 					dbg("ANKLE " .. pick .. " vs " .. opp.Name .. string.format(" %.1f studs", od))
 				end
-			elseif not hasBall then
+			elseif not iHave then
 				for _, c in ipairs(others()) do
 					local d = flatDist(c.HumanoidRootPart.Position, pos)
-					local ca = c:GetAttribute("Action") or ""
-					if cfg.block and (ca == "Shooting" or ca == "Dunking") and d <= cfg.blockRange then
-						local key = c:GetAttribute("ShotStartTime") or ca
-						if blockedShots[c] ~= key then
+					local ca = A(c, "Action") or ""
+					if cfg.block and (ca == "Shooting" or ca == "Dunking" or ca == "ClutchShot") and d <= cfg.blockRange then
+						local shotAt = meterSeen[c]
+						local real = ca == "Dunking" or (shotAt and now - shotAt < 1.5) or A(c, "InAir") == true
+						local key = tostring(A(c, "ShotStartTime") or shotAt or ca)
+						if real and blockedShots[c] ~= key then
 							blockedShots[c] = key
 							task.delay(cfg.blockDelay / 1000, function()
 								ShootRemote:FireServer({ Shoot = true, Input = "E", UseSpace = true })
 								IS.Jump:FireServer()
 								task.delay(0.2, function() ShootRemote:FireServer({ Shoot = false }) end)
 							end)
-							dbg("BLOCK " .. c.Name .. string.format(" %.1f studs", d))
+							dbg(string.format("BLOCK %s %.1f studs (%s, meter=%s, inAir=%s)", c.Name, d, ca, tostring(shotAt ~= nil), tostring(A(c, "InAir"))))
+						elseif not real and fakeLogged[c] ~= key then
+							fakeLogged[c] = key
+							dbg(string.format("FAKE ignored %s (%s, no meter, not in air)", c.Name, ca))
 						end
 					end
-					if cfg.steal and c:GetAttribute("Basketball") and d <= cfg.stealRange and now - lastStealT > 1 then
+					if cfg.steal and hasBall(c) and d <= cfg.stealRange and now - lastStealT > 1 then
 						lastStealT = now
 						IS.Steal:FireServer()
 						dbg("STEAL " .. c.Name .. string.format(" %.1f studs", d))
@@ -453,40 +512,39 @@ local function setHoldG(on)
 	IS.HoldG:FireServer({ HoldingG = on })
 end
 
-local guardSeen = {}
+local guardPrev = setmetatable({}, { __mode = "k" })
+function S.computeGuard()
+	local me = myChar()
+	if not cfg.guard or not me or hasBall(me) then return nil end
+	local pos = Proxy.Position
+	local best, bd = nil, cfg.guardCreep
+	for _, c in ipairs(others()) do
+		if hasBall(c) then
+			local d = flatDist(c.HumanoidRootPart.Position, pos)
+			if d < bd then best, bd = c, d end
+		end
+	end
+	if not best then return nil end
+	local now = os.clock()
+	local hp = best.HumanoidRootPart.Position
+	local prev = guardPrev[best]
+	local vel = Vector3.zero
+	if prev and now > prev.t then vel = ((hp - prev.pos) / (now - prev.t)) * Vector3.new(1, 0, 1) end
+	if prev and now - prev.t < 0.02 then vel = prev.vel else guardPrev[best] = { t = now, pos = hp, vel = vel } end
+	local lead = pingMs / 2000 + 0.05
+	local predicted = hp + vel * lead
+	local goal = nearestGoal(predicted)
+	if not goal then return nil end
+	local toGoal = (goal.Position - predicted) * Vector3.new(1, 0, 1)
+	if toGoal.Magnitude < 0.1 then return nil end
+	local target = Vector3.new(predicted.X, pos.Y, predicted.Z) + toGoal.Unit * math.min(cfg.guardDist, toGoal.Magnitude)
+	return target, best, vel
+end
+
 task.spawn(function()
 	while alive() do
-		local me = myChar()
-		local target
-		if cfg.guard and me and not me:GetAttribute("Basketball") then
-			local pos = Proxy.Position
-			local best, bd = nil, cfg.guardCreep
-			for _, c in ipairs(others()) do
-				if c:GetAttribute("Basketball") then
-					local d = flatDist(c.HumanoidRootPart.Position, pos)
-					if d < bd then best, bd = c, d end
-				end
-			end
-			if best then
-				local now = os.clock()
-				local hp = best.HumanoidRootPart.Position
-				local seen = guardSeen[best]
-				if not seen or now - seen.t >= cfg.guardReaction / 1000 then
-					guardSeen[best] = { t = now, pos = hp }
-					seen = guardSeen[best]
-				end
-				local goal = nearestGoal(seen.pos)
-				if goal then
-					local toGoal = (goal.Position - seen.pos) * Vector3.new(1, 0, 1)
-					if toGoal.Magnitude > 0.1 then
-						target = Vector3.new(seen.pos.X, pos.Y, seen.pos.Z) + toGoal.Unit * cfg.guardDist
-					end
-				end
-			end
-		end
-		S.guardTarget = target
-		if cfg.guard and cfg.guardHoldG then setHoldG(target ~= nil) elseif holdingG then setHoldG(false) end
-		task.wait(0.03)
+		if cfg.guard and cfg.guardHoldG then setHoldG(S.guardTarget ~= nil) elseif holdingG then setHoldG(false) end
+		task.wait(0.05)
 	end
 end)
 
@@ -494,7 +552,7 @@ local lastLobT = 0
 task.spawn(function()
 	while alive() do
 		local me = myChar()
-		if cfg.selfLob and me and me:GetAttribute("Basketball") and (me:GetAttribute("Action") or "") == "" and os.clock() - lastLobT > 2 then
+		if cfg.selfLob and me and hasBall(me) and (A(me, "Action") or "") == "" and os.clock() - lastLobT > 2 then
 			local g, gd = nearestGoal(Proxy.Position)
 			local d = moveInput()
 			if g and gd <= cfg.lobRange and gd > 4 and d and d:Dot(((g.Position - Proxy.Position) * Vector3.new(1, 0, 1)).Unit) > 0.6 then
@@ -590,7 +648,7 @@ local cal = shootTab:Section({ name = "Auto Calibrate", side = "left" })
 cal:Toggle({ name = "Auto Calibrate", default = cfg.autoCal, Callback = setCfg("autoCal") })
 cal:Label({ name = "Learns from every Early / Late result, separately for each meter." })
 cal:Button({ name = "Reset Timing", Callback = function()
-	cfg.meterCal = {}
+	cfg.meterCal2 = {}
 	saveCfg()
 	Library:create_notification({ name = "Timing reset", duration = 2 })
 end })
@@ -646,11 +704,10 @@ slider(stl, "Steal Range (studs)", 3, 12, "stealRange")
 local gd = defTab:Section({ name = "Auto Guard", side = "left" })
 toggle(gd, "Auto Guard", "guard")
 toggle(gd, "Auto Hold G", "guardHoldG")
-toggle(gd, "Sprint", "guardSprint")
+gd:Dropdown({ name = "Mode", items = { "Tight", "Blatant" }, default = cfg.guardMode, Callback = setCfg("guardMode") })
 slider(gd, "Distance (studs)", 2, 10, "guardDist")
 slider(gd, "Creep Distance (studs)", 10, 50, "guardCreep")
-slider(gd, "Reaction Time (ms)", 0, 400, "guardReaction")
-gd:Label({ name = "Stays between the ball handler and the hoop. Move yourself to take over." })
+gd:Label({ name = "Locks onto whoever has the ball, between them and the hoop. Tight moves at up to 1.3x sprint speed, Blatant snaps to them. Move yourself to take over. Pair with Auto Block: fakes are ignored." })
 toggle(stl, "Auto Rebound", "magnet")
 slider(stl, "Rebound Range (studs)", 5, 80, "magnetRange")
 
