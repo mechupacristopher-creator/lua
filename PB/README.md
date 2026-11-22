@@ -16,6 +16,7 @@ Toggle the panel with **RightControl**.
 - Auto Green: hold or tap E and the shot is released for you, with ping compensation
 - Timing Offset slider and Auto Calibrate (learns from every Early / Late result, per meter type)
 - Auto Shoot with range, Anti Contest (only shoots with open space)
+- Auto Self Lob: throws yourself a lob when you drive at the rim
 - Shot Glide and Gather Glide
 
 **Dribbling**
@@ -24,6 +25,7 @@ Toggle the panel with **RightControl**.
 - Combos: type moves (e.g. `Crossover, Spin, StepBack`), play them with a key or button, optional loop
 
 **Defense**
+- Auto Guard: stays between the ball handler and the hoop (distance, creep distance, reaction time, auto hold G, sprint)
 - Auto Block (range and delay), Auto Steal, Auto Rebound
 
 **Player**

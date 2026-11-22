@@ -1,4 +1,4 @@
-local VERSION = "1.2.0"
+local VERSION = "1.3.0"
 local CFG_FILE = "pg_hub_cfg.json"
 
 local G = getgenv()
@@ -19,18 +19,20 @@ local ShootRemote = Remotes.InputService.Shoot
 local MeterSvc = Remotes.MeterService
 
 local cfg = {
-	green = false, timingMs = 0, fullOffset = 1.467, autoCal = false, meterOffsets = {},
+	green = false, timingMs = 0, fullSteps = 24, autoCal = false, meterCal = {},
 	speed = false, speedMult = 1.3, infStamina = false, alwaysSprint = false,
 	magnet = false, magnetRange = 25,
 	autoShoot = false, shootRange = 25, antiContest = false, openDist = 6,
 	dribbleGlide = false, gatherGlide = false, shotGlide = false, glideSpeed = 14,
 	ankle = false, ankleRange = 12, combo = "Crossover, Spin, StepBack", loopCombo = false,
 	block = false, blockRange = 15, blockDelay = 170, steal = false, stealRange = 6,
+	guard = false, guardHoldG = false, guardSprint = false, guardDist = 4, guardCreep = 25, guardReaction = 0,
+	selfLob = false, lobRange = 15,
 	fov = false, fovValue = 80, fullbright = false, noPost = false, antiAfk = false,
 }
 pcall(function() for k, v in pairs(Http:JSONDecode(readfile(CFG_FILE))) do cfg[k] = v end end)
-for _, k in ipairs({ "green", "speed", "infStamina", "alwaysSprint", "magnet", "autoShoot", "dribbleGlide", "gatherGlide", "shotGlide", "ankle", "loopCombo", "block", "steal", "fov", "fullbright", "noPost", "antiAfk" }) do cfg[k] = false end
-if type(cfg.meterOffsets) ~= "table" then cfg.meterOffsets = {} end
+for _, k in ipairs({ "green", "speed", "infStamina", "alwaysSprint", "magnet", "autoShoot", "dribbleGlide", "gatherGlide", "shotGlide", "ankle", "loopCombo", "block", "steal", "guard", "selfLob", "fov", "fullbright", "noPost", "antiAfk" }) do cfg[k] = false end
+if type(cfg.meterCal) ~= "table" then cfg.meterCal = {} end
 local function saveCfg() pcall(writefile, CFG_FILE, Http:JSONEncode(cfg)) end
 
 local S = { conns = {}, status = "Idle", last = "No shot yet", cfg = cfg }
@@ -71,7 +73,7 @@ local function release(reason, est, lead)
 end
 
 local function leadMs(meterType)
-	return readPing() * 0.4 + cfg.timingMs + (cfg.meterOffsets[meterType or ""] or 0)
+	return readPing() * 0.4 + cfg.timingMs + (cfg.meterCal[meterType or ""] or 0)
 end
 S.leadMs = leadMs
 
@@ -79,7 +81,9 @@ local function check()
 	if not shot or shot.released or not shot.rate then return end
 	local est = shot.prev + shot.rate * (os.clock() - shot.tprev)
 	local lead = math.max(leadMs(shot.meterType), 0) / 1000
-	if (cfg.fullOffset - est) / shot.rate <= lead then release("Auto release", est, lead) end
+	local full = shot.m0 + cfg.fullSteps * shot.rate / 60
+	shot.full = full
+	if (full - est) / shot.rate <= lead then release("Auto release", est, lead) end
 end
 
 local TIMING = { "Very Early", "Early", "Slightly Early", "Good", "Perfect", "Slightly Late", "Late", "Very Late" }
@@ -102,7 +106,7 @@ local function logShot(s, timing, contest)
 		"SHOT type=%s win=%s result=%s contest=%s%% green=%s | release=%s at %s ms (est %.3f / full %.3f, lead %s ms, ping %.0f, offset %d) | rate=%s | userReleaseBlocked=%d | %s",
 		tostring(s.meterType), tostring(s.win), timing and TIMING[timing] or "none", tostring(contest), tostring(s.green or false),
 		tostring(s.reason or "none"), s.relT and string.format("%.0f", s.relT * 1000) or "-",
-		s.relEst or -1, cfg.fullOffset, s.relLead and string.format("%.0f", s.relLead * 1000) or "-", s.relPing or pingMs, cfg.timingMs,
+		s.relEst or -1, s.full or -1, s.relLead and string.format("%.0f", s.relLead * 1000) or "-", s.relPing or pingMs, cfg.timingMs,
 		s.rate and string.format("%.3f/s", s.rate) or "-", s.blocked, why))
 	dbg("  samples(ms:offset) " .. table.concat(samples, " "))
 end
@@ -115,7 +119,7 @@ local function onOffset(char)
 	local mag = math.max(math.abs(o.X), math.abs(o.Y))
 	if DEBUG then table.insert(shot.samples, { now - shot.t0, mag }) end
 	if shot.prev and mag < shot.prev - 1e-3 then
-		cfg.fullOffset = shot.prev
+		if shot.steps and shot.steps >= 15 then cfg.fullSteps = shot.steps end
 		release("Meter peaked (late)")
 		return
 	end
@@ -157,9 +161,9 @@ conn(IF.ShowFeedback.OnClientEvent:Connect(function(model, contest, timing)
 		S.last = TIMING[timing] .. (s.relLead and string.format(" - %.0f ms before the top", s.relLead * 1000) or "")
 		if cfg.autoCal and s.relT and s.reason == "Auto release" and timing ~= 5 then
 			local key = s.meterType or ""
-			local cur = cfg.meterOffsets[key] or 0
+			local cur = cfg.meterCal[key] or 0
 			cur = math.clamp(cur + (timing - 5) * 3, -80, 80)
-			cfg.meterOffsets[key] = cur
+			cfg.meterCal[key] = cur
 			s.calMs = cur
 			saveCfg()
 		end
@@ -172,7 +176,7 @@ end))
 conn(IF.RunGreenEffect.OnClientEvent:Connect(function(model)
 	if model == LP.Name or model == myChar() or model == LP then lastGreenT = os.clock() end
 end))
-dbg("---- loaded v" .. VERSION .. " ping " .. math.floor(readPing()) .. " offset " .. cfg.timingMs .. " full " .. cfg.fullOffset)
+dbg("---- loaded v" .. VERSION .. " ping " .. math.floor(readPing()) .. " offset " .. cfg.timingMs .. " fullSteps " .. cfg.fullSteps)
 if myChar() then watchChar(myChar()) end
 conn(workspace.Characters.ChildAdded:Connect(function(c) if c.Name == LP.Name then watchChar(c) end end))
 
@@ -248,8 +252,18 @@ conn(RunService.Stepped:Connect(function()
 		return
 	end
 	if not char:GetAttribute("CanMove") then return end
-	local mult = cfg.speed and cfg.speedMult or 1
 	local ws = math.min(char:GetAttribute("WalkSpeed") or 14, 14)
+	if S.guardTarget and not moveInput() then
+		local off = (S.guardTarget - Proxy.Position) * Vector3.new(1, 0, 1)
+		if off.Magnitude > 0.6 then
+			local spd = math.min(off.Magnitude * 4, ws + (cfg.guardSprint and 3.35 or 0)) * (cfg.speed and cfg.speedMult or 1)
+			bv.Velocity = off.Unit * spd
+		else
+			bv.Velocity = Vector3.zero
+		end
+		return
+	end
+	local mult = cfg.speed and cfg.speedMult or 1
 	if cfg.infStamina and (sprintHeld or cfg.alwaysSprint) and (char:GetAttribute("Stamina") or 100) <= 0.25 and ws > 0 then
 		mult *= (ws + 3.35) / ws
 	end
@@ -432,6 +446,68 @@ task.spawn(function()
 	end
 end)
 
+local holdingG = false
+local function setHoldG(on)
+	if holdingG == on then return end
+	holdingG = on
+	IS.HoldG:FireServer({ HoldingG = on })
+end
+
+local guardSeen = {}
+task.spawn(function()
+	while alive() do
+		local me = myChar()
+		local target
+		if cfg.guard and me and not me:GetAttribute("Basketball") then
+			local pos = Proxy.Position
+			local best, bd = nil, cfg.guardCreep
+			for _, c in ipairs(others()) do
+				if c:GetAttribute("Basketball") then
+					local d = flatDist(c.HumanoidRootPart.Position, pos)
+					if d < bd then best, bd = c, d end
+				end
+			end
+			if best then
+				local now = os.clock()
+				local hp = best.HumanoidRootPart.Position
+				local seen = guardSeen[best]
+				if not seen or now - seen.t >= cfg.guardReaction / 1000 then
+					guardSeen[best] = { t = now, pos = hp }
+					seen = guardSeen[best]
+				end
+				local goal = nearestGoal(seen.pos)
+				if goal then
+					local toGoal = (goal.Position - seen.pos) * Vector3.new(1, 0, 1)
+					if toGoal.Magnitude > 0.1 then
+						target = Vector3.new(seen.pos.X, pos.Y, seen.pos.Z) + toGoal.Unit * cfg.guardDist
+					end
+				end
+			end
+		end
+		S.guardTarget = target
+		if cfg.guard and cfg.guardHoldG then setHoldG(target ~= nil) elseif holdingG then setHoldG(false) end
+		task.wait(0.03)
+	end
+end)
+
+local lastLobT = 0
+task.spawn(function()
+	while alive() do
+		local me = myChar()
+		if cfg.selfLob and me and me:GetAttribute("Basketball") and (me:GetAttribute("Action") or "") == "" and os.clock() - lastLobT > 2 then
+			local g, gd = nearestGoal(Proxy.Position)
+			local d = moveInput()
+			if g and gd <= cfg.lobRange and gd > 4 and d and d:Dot(((g.Position - Proxy.Position) * Vector3.new(1, 0, 1)).Unit) > 0.6 then
+				lastLobT = os.clock()
+				IS.Clutch:FireServer(true)
+				IS.Pass:FireServer({ Player = LP.Name, PassType = 4 })
+				dbg(string.format("SELFLOB goal %.1f studs", gd))
+			end
+		end
+		task.wait(0.05)
+	end
+end)
+
 local lastSprintT = 0
 task.spawn(function()
 	while alive() do
@@ -514,7 +590,7 @@ local cal = shootTab:Section({ name = "Auto Calibrate", side = "left" })
 cal:Toggle({ name = "Auto Calibrate", default = cfg.autoCal, Callback = setCfg("autoCal") })
 cal:Label({ name = "Learns from every Early / Late result, separately for each meter." })
 cal:Button({ name = "Reset Timing", Callback = function()
-	cfg.meterOffsets = {}
+	cfg.meterCal = {}
 	saveCfg()
 	Library:create_notification({ name = "Timing reset", duration = 2 })
 end })
@@ -536,6 +612,10 @@ slider(as, "Range (studs)", 5, 40, "shootRange")
 toggle(as, "Anti Contest", "antiContest")
 slider(as, "Min Open Space (studs)", 2, 15, "openDist")
 local sg = shootTab:Section({ name = "Shot Glide", side = "right" })
+local sl = shootTab:Section({ name = "Auto Self Lob", side = "left" })
+toggle(sl, "Auto Self Lob", "selfLob")
+slider(sl, "Lob Range (studs)", 6, 25, "lobRange")
+sl:Label({ name = "Throws yourself a lob when you drive at the rim. Jump to catch and dunk." })
 toggle(sg, "Shot Glide", "shotGlide")
 toggle(sg, "Gather Glide", "gatherGlide")
 slider(sg, "Glide Speed", 4, 20, "glideSpeed")
@@ -549,10 +629,10 @@ local cb = dribTab:Section({ name = "Combos", side = "right" })
 cb:Textbox({ name = "Combo", placeholder = cfg.combo, Callback = function(t) if t ~= "" then setCfg("combo")(t) end end })
 cb:Label({ name = "Moves: " .. table.concat(MOVES, ", ") })
 cb:Button({ name = "Play Combo", Callback = playCombo })
-cb:Keybind({ name = "Combo Key", default = Enum.KeyCode[cfg.comboKey or "T"] or Enum.KeyCode.T, Callback = function(k) setCfg("comboKey")(k.Name) end })
+cb:Keybind({ name = "Combo Key", default = Enum.KeyCode[cfg.comboKey or "J"] or Enum.KeyCode.J, Callback = function(k) setCfg("comboKey")(k.Name) end })
 toggle(cb, "Loop Combo", "loopCombo")
 conn(game:GetService("UserInputService").InputBegan:Connect(function(input, gpe)
-	if not gpe and input.KeyCode.Name == (cfg.comboKey or "T") then playCombo() end
+	if not gpe and input.KeyCode.Name == (cfg.comboKey or "J") then playCombo() end
 end))
 
 local defTab = win:Tab({ name = "Defense", icon = "lucide:shield" })
@@ -563,6 +643,14 @@ slider(bk, "Block Delay (ms)", 0, 500, "blockDelay")
 local stl = defTab:Section({ name = "Steal & Rebound", side = "right" })
 toggle(stl, "Auto Steal", "steal")
 slider(stl, "Steal Range (studs)", 3, 12, "stealRange")
+local gd = defTab:Section({ name = "Auto Guard", side = "left" })
+toggle(gd, "Auto Guard", "guard")
+toggle(gd, "Auto Hold G", "guardHoldG")
+toggle(gd, "Sprint", "guardSprint")
+slider(gd, "Distance (studs)", 2, 10, "guardDist")
+slider(gd, "Creep Distance (studs)", 10, 50, "guardCreep")
+slider(gd, "Reaction Time (ms)", 0, 400, "guardReaction")
+gd:Label({ name = "Stays between the ball handler and the hoop. Move yourself to take over." })
 toggle(stl, "Auto Rebound", "magnet")
 slider(stl, "Rebound Range (studs)", 5, 80, "magnetRange")
 
@@ -588,6 +676,7 @@ function S.Unload()
 	if G.PGHub == S then G.PGHub = nil end
 	for _, c in ipairs(S.conns) do pcall(function() c:Disconnect() end) end
 	cfg.fullbright, cfg.noPost = false, false
+	pcall(setHoldG, false)
 	pcall(applyLighting)
 	Camera.FieldOfView = defaultFov
 	pcall(function() Library:Unload() end)
