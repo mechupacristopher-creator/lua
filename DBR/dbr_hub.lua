@@ -1,4 +1,4 @@
-local VERSION = "1.0.0"
+local VERSION = "1.1.0"
 local FILE, CFG_FILE = "dbr_farm.lua", "dbr_farm_cfg.json"
 
 local SOURCE_URL = "https://raw.githubusercontent.com/mechupacristopher-creator/lua/main/DBR/dbr_hub.lua"
@@ -733,208 +733,58 @@ task.spawn(function()
 	end
 end)
 
-local C = {
-	bg = Color3.fromRGB(16, 16, 16), side = Color3.fromRGB(20, 20, 20), item = Color3.fromRGB(30, 30, 30),
-	box = Color3.fromRGB(42, 42, 42), accent = Color3.fromRGB(176, 8, 8), text = Color3.fromRGB(235, 235, 235),
-	dim = Color3.fromRGB(150, 150, 150),
-}
-local function new(class, props, parent)
-	local o = Instance.new(class)
-	for k, v in pairs(props) do o[k] = v end
-	o.Parent = parent
-	return o
-end
-local function corner(o, r) new("UICorner", { CornerRadius = UDim.new(0, r or 8) }, o) end
-
+local UI_URL = "https://raw.githubusercontent.com/mechupacristopher-creator/lua/main/lib/eze_ui.lua"
 local guiParent = (gethui and gethui()) or game:GetService("CoreGui")
 
 for _, o in ipairs(guiParent:GetChildren()) do if o.Name == "DBRFarm" or o.Name == "DBRHub" or o.Name == "EzeHub" then o:Destroy() end end
-local gui = new("ScreenGui", { Name = "EzeHub", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, guiParent)
-S.gui = gui
 
-local win = new("Frame", { Size = UDim2.fromOffset(640, 420), Position = UDim2.new(0.5, -320, 0.5, -210), BackgroundColor3 = C.bg }, gui)
-corner(win, 10)
-new("UIStroke", { Color = Color3.fromRGB(45, 45, 45) }, win)
+local Library = loadstring(game:HttpGet(UI_URL))()
+local win = Library:window({ name = "Eze Hub" })
+S.gui = guiParent:FindFirstChild("MonolithUI")
 
-local top = new("Frame", { Size = UDim2.new(1, 0, 0, 44), BackgroundTransparency = 1 }, win)
-new("TextLabel", {
-	Text = "Eze Hub | Version: " .. VERSION, Font = Enum.Font.GothamMedium, TextSize = 16, TextColor3 = C.text,
-	BackgroundTransparency = 1, Position = UDim2.fromOffset(18, 0), Size = UDim2.new(1, -120, 1, 0), TextXAlignment = Enum.TextXAlignment.Left,
-}, top)
-local closeBtn = new("TextButton", { Text = "✕", Font = Enum.Font.GothamBold, TextSize = 18, TextColor3 = C.text, BackgroundTransparency = 1,
-	Size = UDim2.fromOffset(36, 36), Position = UDim2.new(1, -42, 0, 4) }, top)
-local minBtn = new("TextButton", { Text = "—", Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = C.text, BackgroundTransparency = 1,
-	Size = UDim2.fromOffset(36, 36), Position = UDim2.new(1, -80, 0, 4) }, top)
-
-do
-	local dragging, start, startPos
-	top.InputBegan:Connect(function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-			dragging, start, startPos = true, i.Position, win.Position
-		end
-	end)
-	table.insert(S.conns, UIS.InputChanged:Connect(function(i)
-		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
-			local d = i.Position - start
-			win.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
-		end
-	end))
-	table.insert(S.conns, UIS.InputEnded:Connect(function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragging = false end
-	end))
+local toggles = {}
+local function refreshAll()
+	for _, t in ipairs(toggles) do
+		local v = t.get() and true or false
+		if t.api.enabled ~= v then t.api.enabled = v t.api:refresh() end
+	end
 end
-
-local pill = new("TextButton", { Text = "Eze Hub", Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = C.text, BackgroundColor3 = C.accent,
-	Size = UDim2.fromOffset(110, 34), Position = UDim2.new(0, 16, 0.5, -17), Visible = false }, gui)
-corner(pill, 8)
-local function setOpen(open) win.Visible, pill.Visible = open, not open end
-minBtn.MouseButton1Click:Connect(function() setOpen(false) end)
-pill.MouseButton1Click:Connect(function() setOpen(true) end)
-table.insert(S.conns, UIS.InputBegan:Connect(function(i, gp)
-	if not gp and i.KeyCode == Enum.KeyCode.RightControl then setOpen(not win.Visible) end
-end))
-
-local side = new("Frame", { Size = UDim2.new(0, 170, 1, -56), Position = UDim2.fromOffset(12, 48), BackgroundTransparency = 1 }, win)
-new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, side)
-local pagesHolder = new("Frame", { Size = UDim2.new(1, -206, 1, -56), Position = UDim2.fromOffset(194, 48), BackgroundTransparency = 1 }, win)
-
-local refreshers, tabs = {}, {}
-local function refreshAll() for _, f in ipairs(refreshers) do f() end end
 local function changed() saveCfg() refreshAll() end
 
-local function selectTab(t)
-	for _, o in ipairs(tabs) do
-		o.page.Visible = o == t
-		o.btn.BackgroundColor3 = o == t and C.accent or C.item
-	end
+local function Toggle(sec, text, get, set)
+	local api = sec:Toggle({ name = text, default = get(), NoSave = true, Callback = function(v)
+		if (get() and true or false) ~= v then set(v) changed() end
+	end })
+	table.insert(toggles, { api = api, get = get })
+end
+local function cfgToggle(sec, text, key) Toggle(sec, text, function() return cfg[key] end, function(v) cfg[key] = v end) end
+
+local function modeToggle(sec, text, key)
+	Toggle(sec, text, function() return cfg[key] end, function(v) cfg[key] = v if v then S.pumpkin = false end end)
 end
 
-local function Tab(name, icon)
-	local btn = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = C.item, Size = UDim2.new(1, 0, 0, 40), LayoutOrder = #tabs + 1 }, side)
-	corner(btn, 8)
-	new("TextLabel", { Text = icon .. "  |  " .. name, Font = Enum.Font.Gotham, TextSize = 15, TextColor3 = C.text, BackgroundTransparency = 1,
-		Size = UDim2.new(1, -16, 1, 0), Position = UDim2.fromOffset(16, 0), TextXAlignment = Enum.TextXAlignment.Left }, btn)
-	local page = new("ScrollingFrame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
-		ScrollBarImageColor3 = C.accent, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, Visible = false }, pagesHolder)
-	new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, page)
-	new("UIPadding", { PaddingRight = UDim.new(0, 6) }, page)
-	local t = { btn = btn, page = page, n = 0 }
-	btn.MouseButton1Click:Connect(function() selectTab(t) end)
-	table.insert(tabs, t)
-
-	local function item(h)
-		t.n += 1
-		local f = new("Frame", { Size = UDim2.new(1, 0, 0, h or 40), BackgroundColor3 = C.item, LayoutOrder = t.n }, page)
-		corner(f, 8)
-		return f
-	end
-	local function label(parent, text)
-		return new("TextLabel", { Text = text, Font = Enum.Font.Gotham, TextSize = 15, TextColor3 = C.text, BackgroundTransparency = 1,
-			Size = UDim2.new(0.55, 0, 1, 0), Position = UDim2.fromOffset(14, 0), TextXAlignment = Enum.TextXAlignment.Left }, parent)
-	end
-
-	function t.Section(text)
-		t.n += 1
-		new("TextLabel", { Text = text, Font = Enum.Font.GothamBold, TextSize = 20, TextColor3 = C.text, BackgroundTransparency = 1,
-			Size = UDim2.new(1, 0, 0, 34), TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = t.n }, page)
-	end
-
-	function t.Toggle(text, get, set)
-		local f = item()
-		label(f, text)
-		local box = new("TextButton", { Text = "", AutoButtonColor = false, Size = UDim2.fromOffset(30, 30), Position = UDim2.new(1, -40, 0.5, -15), BackgroundColor3 = C.box }, f)
-		corner(box, 6)
-		local tick = new("TextLabel", { Text = "✓", Font = Enum.Font.GothamBold, TextSize = 18, TextColor3 = C.text, BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) }, box)
-		local function refresh() local on = get() box.BackgroundColor3 = on and C.accent or C.box tick.Visible = on end
-		box.MouseButton1Click:Connect(function() set(not get()) changed() end)
-		table.insert(refreshers, refresh)
-		refresh()
-	end
-
-	function t.Dropdown(text, options, display, get, set)
-		local f = item()
-		label(f, text)
-		local valueBtn = new("TextButton", { Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = C.text, AutoButtonColor = false, BackgroundColor3 = C.box,
-			Size = UDim2.new(0.4, 0, 0, 30), Position = UDim2.new(0.6, -10, 0.5, -15) }, f)
-		corner(valueBtn, 6)
-		local list = item(0)
-		list.BackgroundTransparency = 1
-		list.Visible = false
-		new("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, list)
-		list.AutomaticSize = Enum.AutomaticSize.Y
-		for i, opt in ipairs(options) do
-			local o = new("TextButton", { Text = display(opt), Font = Enum.Font.Gotham, TextSize = 14, TextColor3 = C.text, AutoButtonColor = false,
-				BackgroundColor3 = C.box, Size = UDim2.new(1, 0, 0, 30), LayoutOrder = i }, list)
-			corner(o, 6)
-			o.MouseButton1Click:Connect(function() set(opt) list.Visible = false changed() end)
-		end
-		valueBtn.MouseButton1Click:Connect(function() list.Visible = not list.Visible end)
-		table.insert(refreshers, function() valueBtn.Text = display(get()) end)
-		valueBtn.Text = display(get())
-	end
-
-	function t.Slider(text, min, max, get, set)
-		local f = item()
-		label(f, text)
-		local val = new("TextLabel", { Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = C.text, BackgroundTransparency = 1,
-			Size = UDim2.fromOffset(40, 40), Position = UDim2.new(0.5, -10, 0, 0), TextXAlignment = Enum.TextXAlignment.Right }, f)
-		local bar = new("Frame", { Size = UDim2.new(0.42, -24, 0, 8), Position = UDim2.new(0.58, 0, 0.5, -4), BackgroundColor3 = C.box }, f)
-		corner(bar, 4)
-		local fill = new("Frame", { BackgroundColor3 = C.accent, Size = UDim2.fromScale(0, 1) }, bar)
-		corner(fill, 4)
-		local knob = new("Frame", { Size = UDim2.fromOffset(18, 18), AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = C.text, Position = UDim2.fromScale(0, 0.5) }, bar)
-		corner(knob, 9)
-		local function refresh()
-			local a = (get() - min) / (max - min)
-			fill.Size, knob.Position, val.Text = UDim2.fromScale(a, 1), UDim2.fromScale(a, 0.5), tostring(get())
-		end
-		local dragging = false
-		local function apply(x)
-			local a = math.clamp((x - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
-			set(math.floor(min + a * (max - min) + 0.5))
-			refresh()
-		end
-		bar.InputBegan:Connect(function(i)
-			if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragging = true apply(i.Position.X) end
-		end)
-		table.insert(S.conns, UIS.InputChanged:Connect(function(i)
-			if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then apply(i.Position.X) end
-		end))
-		table.insert(S.conns, UIS.InputEnded:Connect(function(i)
-			if dragging and (i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch) then dragging = false saveCfg() end
-		end))
-		table.insert(refreshers, refresh)
-		refresh()
-	end
-
-	function t.Button(text, cb)
-		local f = item()
-		local b = new("TextButton", { Text = text, Font = Enum.Font.GothamMedium, TextSize = 15, TextColor3 = C.text, BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) }, f)
-		b.MouseButton1Click:Connect(cb)
-	end
-
-	function t.Paragraph(getText)
-		local f = item(0)
-		f.AutomaticSize = Enum.AutomaticSize.Y
-		local l = new("TextLabel", { Font = Enum.Font.Gotham, TextSize = 14, TextColor3 = C.dim, BackgroundTransparency = 1, RichText = true, TextWrapped = true,
-			Size = UDim2.new(1, -28, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Position = UDim2.fromOffset(14, 0),
-			TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top }, f)
-		new("UIPadding", { PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10) }, f)
-		task.spawn(function() while alive() do l.Text = getText() task.wait(0.3) end end)
-	end
-
-	return t
+local function Slider(sec, text, min, max, key)
+	sec:Slider({ name = text, min = min, max = max, default = cfg[key], decimals = 0, NoSave = true, Callback = function(v)
+		v = math.floor(v + 0.5)
+		if cfg[key] ~= v then cfg[key] = v saveCfg() end
+	end })
 end
 
-local function cfgToggle(tab, text, key) tab.Toggle(text, function() return cfg[key] end, function(v) cfg[key] = v end) end
-
-local function modeToggle(tab, text, key)
-	tab.Toggle(text, function() return cfg[key] end, function(v) cfg[key] = v if v then S.pumpkin = false end end)
+local function Paragraph(sec, getText)
+	local l = sec:Label({ name = "" })
+	l.instance.RichText = true
+	task.spawn(function()
+		while alive() do
+			local ok, txt = pcall(getText)
+			l.instance.Text = ok and txt or l.instance.Text
+			task.wait(0.3)
+		end
+	end)
 end
 
-local home = Tab("Home", "⌂")
-home.Section("Status")
-home.Paragraph(function()
+local home = win:Tab({ name = "Home", icon = "lucide:home" })
+local status = home:Section({ name = "Status", side = "left" })
+Paragraph(status, function()
 	local c, parts = cap(), {}
 	for _, n in ipairs(STATS) do
 		local v = stat(n)
@@ -945,10 +795,10 @@ home.Paragraph(function()
 	return ("<b><font color=\"#ffffff\">%s</font></b>\n\n%s\n\nCap: %s  |  Zenkai: %d  |  World: %s")
 		:format(S.status, table.concat(parts, "\n"), fmt(c), zenkai(), w or "?")
 end)
-home.Section("Spawned")
+local spawned = home:Section({ name = "Spawned", side = "right" })
 local WATCH = table.clone(BOSS_NAMES)
 table.insert(WATCH, "Pumpkin Creature")
-home.Paragraph(function()
+Paragraph(spawned, function()
 	local map, lines = workspace:FindFirstChild("Map"), {}
 	if not map then return "Map not loaded" end
 	local balls = {}
@@ -974,64 +824,75 @@ home.Paragraph(function()
 	table.insert(lines, "Pumpkins: " .. pumpkins)
 	return table.concat(lines, "\n")
 end)
-home.Section("Info")
-home.Paragraph(function() return "Toggle the UI with <b>RightControl</b> or the minimize button.\nSettings are saved and the script reloads itself after teleports." end)
+local info = home:Section({ name = "Info", side = "right" })
+info:Label({ name = "Toggle the UI with RightControl or the minimize button. Settings are saved and the script reloads itself after teleports." })
 
-local farming = Tab("Farming", "⚒")
-farming.Section("Stat Farm")
-modeToggle(farming, "Auto Farm Stats", "farm")
-farming.Dropdown("Stat to Train", TYPES, function(v) return NAMES[v] end, function() return cfg.type end, function(v) cfg.type = v end)
-cfgToggle(farming, "Auto Zenkai", "zenkai")
-cfgToggle(farming, "Auto Transform", "transform")
-cfgToggle(farming, "Kill Bosses While Farming", "bossFarm")
-farming.Section("World")
-cfgToggle(farming, "Teleport to Best World", "world")
-cfgToggle(farming, "Safe Farm (sky)", "safe")
-cfgToggle(farming, "Prefer Small Servers (Earth only)", "small")
+local farming = win:Tab({ name = "Farming", icon = "lucide:dumbbell" })
+local statFarm = farming:Section({ name = "Stat Farm", side = "left" })
+modeToggle(statFarm, "Auto Farm Stats", "farm")
+do
+	local labels, byLabel = {}, {}
+	for _, t in ipairs(TYPES) do table.insert(labels, NAMES[t]) byLabel[NAMES[t]] = t end
+	statFarm:Dropdown({ name = "Stat to Train", items = labels, default = NAMES[cfg.type], NoSave = true, Callback = function(label)
+		local t = byLabel[label]
+		if t and cfg.type ~= t then cfg.type = t saveCfg() end
+	end })
+end
+cfgToggle(statFarm, "Auto Zenkai", "zenkai")
+cfgToggle(statFarm, "Auto Transform", "transform")
+cfgToggle(statFarm, "Kill Bosses While Farming", "bossFarm")
+local world = farming:Section({ name = "World", side = "right" })
+cfgToggle(world, "Teleport to Best World", "world")
+cfgToggle(world, "Safe Farm (sky)", "safe")
+cfgToggle(world, "Prefer Small Servers (Earth only)", "small")
 
-local quests = Tab("Quests", "☰")
-quests.Section("Quests")
-modeToggle(quests, "Auto Quests (daily + weekly)", "quests")
-modeToggle(quests, "Dragon Ball Finder", "dragon")
+local questsTab = win:Tab({ name = "Quests", icon = "lucide:scroll-text" })
+local questSec = questsTab:Section({ name = "Quests", side = "left" })
+modeToggle(questSec, "Auto Quests (daily + weekly)", "quests")
+modeToggle(questSec, "Dragon Ball Finder", "dragon")
 
-local event = Tab("Event", "✦")
-event.Section("Halloween")
-modeToggle(event, "Auto Halloween Event", "halloween")
-event.Toggle("Pumpkin Farm", function() return S.pumpkin end, function(v)
+local event = win:Tab({ name = "Event", icon = "lucide:sparkles" })
+local halloween = event:Section({ name = "Halloween", side = "left" })
+modeToggle(halloween, "Auto Halloween Event", "halloween")
+Toggle(halloween, "Pumpkin Farm", function() return S.pumpkin end, function(v)
 	S.pumpkin = v
 	target = nil
 	if v then cfg.farm, cfg.dragon, cfg.quests, cfg.halloween = false, false, false, false end
 end)
-event.Paragraph(function() return "Lights lanterns, fights Corruptkin / Ablaze, smashes pumpkins and claims challenge rewards." end)
+halloween:Label({ name = "Lights lanterns, fights Corruptkin / Ablaze, smashes pumpkins and claims challenge rewards." })
 
-local combat = Tab("Combat", "⚔")
-combat.Section("Bosses")
-cfgToggle(combat, "Use Ki Skills (no melee)", "skills")
-combat.Slider("Boss Distance", 40, 150, function() return cfg.bossRange end, function(v) cfg.bossRange = v end)
-combat.Section("Safe Mode")
-combat.Slider("Retreat at Health %", 10, 90, function() return cfg.retreatAt end, function(v) cfg.retreatAt = v end)
-combat.Slider("Back at Health %", 20, 100, function() return cfg.resumeAt end, function(v) cfg.resumeAt = v end)
+local combat = win:Tab({ name = "Combat", icon = "lucide:swords" })
+local bosses = combat:Section({ name = "Bosses", side = "left" })
+cfgToggle(bosses, "Use Ki Skills (no melee)", "skills")
+Slider(bosses, "Boss Distance", 40, 150, "bossRange")
+local safeMode = combat:Section({ name = "Safe Mode", side = "right" })
+Slider(safeMode, "Retreat at Health %", 10, 90, "retreatAt")
+Slider(safeMode, "Back at Health %", 20, 100, "resumeAt")
 
-local misc = Tab("Misc", "⚙")
-misc.Section("Misc")
-cfgToggle(misc, "Anti-AFK", "antiAfk")
-cfgToggle(misc, "Auto Reconnect", "reconnect")
-misc.Section("Server")
-misc.Button("Hop to Smallest Server (Earth)", function() if not hopSmallest() then S.status = "Server hop only works on Earth" end end)
-misc.Button("Unload Script", function() S.Unload() end)
-
-selectTab(tabs[1])
+local misc = win:Tab({ name = "Misc", icon = "lucide:settings" })
+local miscSec = misc:Section({ name = "Misc", side = "left" })
+cfgToggle(miscSec, "Anti-AFK", "antiAfk")
+cfgToggle(miscSec, "Auto Reconnect", "reconnect")
+local server = misc:Section({ name = "Server", side = "right" })
+server:Button({ name = "Hop to Smallest Server (Earth)", Callback = function() if not hopSmallest() then S.status = "Server hop only works on Earth" end end })
+server:Button({ name = "Unload Script", Callback = function() S.Unload() end })
 
 function S.Unload()
+	if S.unloaded then return end
+	S.unloaded = true
 	G.DBRFarm = nil
 	setFast(false)
 	stopCharge(LP.Character and LP.Character:FindFirstChild("State"))
 	for _, c in ipairs(S.conns) do c:Disconnect() end
-	if S.gui then S.gui:Destroy() end
+	pcall(function() Library:Unload() end)
 end
 
-closeBtn.MouseButton1Click:Connect(function()
-	cfg.farm, cfg.dragon, cfg.quests, cfg.halloween = false, false, false, false
-	saveCfg()
-	S.Unload()
-end)
+if S.gui then
+	table.insert(S.conns, S.gui.AncestryChanged:Connect(function(_, parent)
+		if parent == nil and not S.unloaded then
+			cfg.farm, cfg.dragon, cfg.quests, cfg.halloween = false, false, false, false
+			saveCfg()
+			S.Unload()
+		end
+	end))
+end

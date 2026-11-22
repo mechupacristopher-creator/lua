@@ -8,7 +8,7 @@ Tower defense macro for UTD.
 loadstring(game:HttpGet("https://raw.githubusercontent.com/mechupacristopher-creator/lua/main/UTD/eze_hub_utd.lua"))()
 ```
 
-Toggle the panel with **RightShift**. On mobile, use the **–** button and **Settings → Interface → UI size** (50–150%).
+Toggle the panel with **RightControl** (change it in the **UI Settings** tab). Drag the bottom-right corner to resize; on mobile, **UI Settings → Mobile** adds floating buttons for toggles.
 
 ## Features
 
@@ -38,4 +38,4 @@ Toggle the panel with **RightShift**. On mobile, use the **–** button and **Se
 
 - Settings and recordings are saved per account in `td_macro_cfg_<UserId>.json` in your executor's workspace.
 - Two accounts in the same match won't stack units on the same spot.
-- Reloads itself after teleports and remembers if the panel was minimized; running it again replaces the previous copy.
+- Reloads itself after teleports; running it again replaces the previous copy.

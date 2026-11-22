@@ -8,7 +8,7 @@ Auto farm hub for [Dragon Ball Rage](https://www.roblox.com/games/71315343/).
 loadstring(game:HttpGet("https://raw.githubusercontent.com/mechupacristopher-creator/lua/main/DBR/dbr_hub.lua"))()
 ```
 
-Toggle the panel with **RightControl** or the minimize button.
+Toggle the panel with **RightControl** or the minimize button. The **UI Settings** tab changes colors, the toggle key and opacity.
 
 ## Features
 
