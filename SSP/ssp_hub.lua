@@ -1,4 +1,4 @@
-local VERSION = "1.3.0"
+local VERSION = "1.3.1"
 local CFG_FILE = "ssp_aim_cfg.json"
 
 local G = getgenv()
@@ -110,14 +110,15 @@ local function solve(start, gx, tz, ty, launch)
 	return best
 end
 
-local function shotLaunch(curve, charge, power)
-	local tpl = S.fireArgs and os.clock() - S.fireAt < 0.3 and S.fireArgs
+local function shotLaunch(curve, charge, power, forced)
+	local tpl = S.fireArgs and os.clock() - S.fireAt < (forced and 1 or 0.3) and S.fireArgs
 	local mult = S.curveMult or 1
 	return function(dir)
 		local u, spd, spin
 		if tpl then
 			local a = table.clone(tpl)
 			a[1], a[3] = dir, curve * mult
+			if forced then a[2], a[4] = charge, power end
 			u, spd, spin = origFire(table.unpack(a, 1, tpl.n))
 		else
 			u, spd, spin = origFire(dir, charge, curve, power)
@@ -220,16 +221,16 @@ local function corners(ball, gx, keeper)
 	return list
 end
 
-local function compute()
+local function compute(force)
 	local charging, start = Charge.get()
-	if not (cfg.aim and charging) then return nil end
+	if not cfg.aim or not (charging or force) then return nil end
 	local ball = ballPos()
 	if not ball then return nil end
 	local goal, why = pickGoal(ball)
 	if not goal then S.status = why return nil end
 	local gx = goal.X
-	local prog = Shot.progress(start, Clock.server())
-	local power = Power.armed() and prog >= Shot.POWER_MIN_CHARGE
+	local prog = force and 1 or Shot.progress(start, Clock.server())
+	local power = force and force.power or (Power.armed() and prog >= Shot.POWER_MIN_CHARGE)
 	local keeper = keeperNear(goal, ball)
 	local lead = S.lead and os.clock() - S.lead.at < 0.3 and S.lead.start
 	local from = lead or ball
@@ -237,7 +238,7 @@ local function compute()
 		local tries = cfg.curve and { 1, -1 } or { 0 }
 		local found
 		for _, cv in ipairs(tries) do
-			local s = solve(from, gx, c.z, c.y, shotLaunch(cv, prog, power))
+			local s = solve(from, gx, c.z, c.y, shotLaunch(cv, prog, power, force ~= nil))
 			if s and s.err < 0.6 then
 				s.curve = cv
 				local straightZ = from.Z + math.tan(s.yaw) * (gx - from.X)
@@ -441,10 +442,21 @@ table.insert(S.conns, RunService.Heartbeat:Connect(function(dt)
 		end
 	end
 	local charging = Charge.get()
+	if charging then S.releasedAt, S.powerSolved = nil, false end
 	if S.sol and not charging and cfg.aim then
+		S.releasedAt = S.releasedAt or os.clock()
 
-		if Power.rooted(Clock.mono()) then S.powerHold = os.clock() + 0.35 end
-		if S.powerHold and os.clock() < S.powerHold then
+		if Power.rooted(Clock.mono()) then
+			S.powerHold = os.clock() + 0.35
+			if not S.powerSolved then
+				S.powerSolved = true
+				local ok, res = pcall(compute, { power = true })
+				if ok and res then S.sol = res end
+			end
+		end
+
+		local pending = os.clock() - S.releasedAt < 0.2
+		if pending or (S.powerHold and os.clock() < S.powerHold) then
 			S.status = "Power shot windup: holding aim on " .. ((S.sol.target.Y > 3) and "top" or "low") .. " corner"
 			return
 		end
