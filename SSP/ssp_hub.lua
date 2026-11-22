@@ -1,4 +1,4 @@
-local VERSION = "1.4.0"
+local VERSION = "1.5.0"
 local CFG_FILE = "ssp_aim_cfg.json"
 
 local G = getgenv()
@@ -34,7 +34,7 @@ if setthreadidentity then pcall(setthreadidentity, 8) end
 
 local cfg = {
 	aim = false, curve = true, height = "Auto", showTarget = false, range = 220, margin = 2.2,
-	volley = false, dribble = false, dribbleRange = 10, tackle = false, tackleRange = 8,
+	volley = false, dribble = false, dribbleRange = 10, tackle = false, tackleRange = 16,
 	save = false, gkPosition = false,
 }
 pcall(function() for k, v in pairs(Http:JSONDecode(readfile(CFG_FILE))) do cfg[k] = v end end)
@@ -45,6 +45,10 @@ if (cfg.cfgVersion or 0) < 2 then
 end
 if cfg.cfgVersion < 3 then
 	cfg.margin, cfg.cfgVersion = math.max(cfg.margin or 0, 2.2), 3
+	saveCfg()
+end
+if cfg.cfgVersion < 4 then
+	cfg.tackleRange, cfg.cfgVersion = math.max(cfg.tackleRange or 0, 16), 4
 	saveCfg()
 end
 
@@ -203,14 +207,20 @@ local function pickGoal(ball)
 	return best
 end
 
-local function corners(ball, gx, keeper)
+local function corners(ball, gx, keeper, volley)
 
 	local bias = G.SSPAimBias or { y = 0, z = 0 }
-	local zIn = math.clamp(HALF_W - cfg.margin - bias.z, HALF_W - 5, HALF_W - 1.6)
+	local zIn = math.clamp(HALF_W - cfg.margin - bias.z - (volley and 0.6 or 0), HALF_W - 5, HALF_W - 1.6)
 	local zs = { zIn, -zIn }
 	local ys = {}
-	if cfg.height ~= "Low" then table.insert(ys, math.clamp(BAR - 2 - bias.y, BAR - 4, BAR - 1.4)) end
-	if cfg.height ~= "High" then table.insert(ys, math.clamp(1.6 - bias.y, 1.1, 3.5)) end
+	if volley then
+
+		if cfg.height ~= "High" then table.insert(ys, 1.6) table.insert(ys, 4) end
+		table.insert(ys, BAR - 3)
+	else
+		if cfg.height ~= "Low" then table.insert(ys, math.clamp(BAR - 2 - bias.y, BAR - 4, BAR - 1.4)) end
+		if cfg.height ~= "High" then table.insert(ys, math.clamp(1.6 - bias.y, 1.1, 3.5)) end
+	end
 	local list = {}
 	local kp
 	if keeper then
@@ -230,7 +240,10 @@ local function corners(ball, gx, keeper)
 			table.insert(list, { z = z, y = y, score = score })
 		end
 	end
-	table.sort(list, function(a, b) return a.score > b.score end)
+	table.sort(list, function(a, b)
+		if volley and a.y ~= b.y then return a.y < b.y end
+		return a.score > b.score
+	end)
 	return list
 end
 
@@ -280,7 +293,7 @@ local function computeVolley(m)
 	local side = Match.other(gx < 0 and Match.WEST or Match.EAST)
 	local keeper = keeperNear(goal, m.spot)
 	local launch = volleyLaunch(m, side)
-	for _, c in ipairs(corners(m.spot, gx, keeper)) do
+	for _, c in ipairs(corners(m.spot, gx, keeper, true)) do
 		local s = solve(m.spot, gx, c.z, c.y, launch)
 		if s and s.err < 0.8 then
 			s.curve = 0
@@ -305,6 +318,39 @@ local function volleySol()
 	S.vcache = { m = m, at = os.clock(), sol = sol }
 	if sol then S.vsol, S.vsolAt = sol, os.clock() end
 	return sol
+end
+
+local Contest = require(RS.shared.play.contest)
+local Cooldown = require(RS.client.play.cooldown)
+local PRESS_DELAY = 0.03
+
+local function tackleReady()
+	local ok, left = pcall(Cooldown.remaining, "tackle")
+	return not ok or (left or 0) <= 0
+end
+
+local function fireContest(dir, now)
+	S.tackleDir = dir
+	S.steerUntil = now + PRESS_DELAY + 0.11
+	S.pressAt, S.pressUntil = now + PRESS_DELAY, now + PRESS_DELAY + 0.06
+	S.lastTackle = now
+end
+
+local function interceptDir(me, target, vel)
+	local reach = Contest.TACKLE_REACH * 0.8
+	local v0, v1, win = Contest.SLIDE_SPEED, Contest.SLIDE_END, Contest.TACKLE_WINDOW
+	local lead = PRESS_DELAY + Contest.TACKLE_STARTUP + 0.03
+	local travelled, step = 0, 0.02
+	for tau = 0, win, step do
+		local tt = lead + tau
+		local p = target + vel * tt
+		local to = (p - me) * Vector3.new(1, 0, 1)
+		if to.Magnitude <= travelled + reach then
+			return to.Magnitude > 0.05 and to.Unit or nil, to.Magnitude, tt
+		end
+		travelled += (v0 + (v1 - v0) * (tau / win)) * step
+	end
+	return nil
 end
 
 local function findWorld()
@@ -362,12 +408,12 @@ local function keeperStep(now)
 			local d = flat.Magnitude
 			S.gkStatus = ("Shot incoming: %.2fs, %.1f studs %s, height %.1f"):format(t, d, hit.Z > mePos.Z and "+z" or "-z", hit.Y)
 			local needCatch = d < 2.5 and hit.Y < Keeper.CATCH_RISE
-			if cfg.save and not needCatch and now - (S.lastDive or 0) > 0.8 then
+			if cfg.save and not needCatch and now - (S.lastDive or 0) > 0.8 and tackleReady() then
 				local needed = d / Keeper.DIVE_SPEED + Keeper.DIVE_REACTION + 0.06
 				if t <= needed and d > 0.3 then
 					S.gkMove = nil
-					S.tackleDir = flat.Unit
-					S.tackleUntil, S.lastDive, S.lastTackle = now + 0.05, now, now
+					fireContest(flat.Unit, now)
+					S.lastDive = now
 					S.gkStatus = ("Dived %.1f studs toward the ball (%.2fs before it crossed)"):format(d, t)
 					return
 				end
@@ -469,20 +515,26 @@ do
 	oldPressed = hookfunction(Actions.pressed, function(name, ...)
 		local s = st()
 		if name == "dribble" and s and s.dribbleUntil and os.clock() < s.dribbleUntil then return true end
-		if name == "tackle" and s and s.tackleUntil and os.clock() < s.tackleUntil then return true end
+		if name == "tackle" and s and s.pressAt then
+			local now = os.clock()
+			if now >= s.pressAt and now < s.pressUntil then return true end
+		end
 		return oldPressed(name, ...)
 	end)
+
+	local function steering(s) return s and s.tackleDir and s.steerUntil and os.clock() < s.steerUntil end
 	local oldMove
 	oldMove = hookfunction(Control.move, function(...)
 		local r = oldMove(...)
 		local s = st()
+		if steering(s) then return s.tackleDir end
 		if s and s.gkMove and (typeof(r) ~= "Vector3" or r.Magnitude < 0.1) then return s.gkMove end
 		return r
 	end)
 	local oldCamera
 	oldCamera = hookfunction(Look.camera, function(...)
 		local s = st()
-		if s and s.tackleUntil and os.clock() < s.tackleUntil and s.tackleDir then return s.tackleDir end
+		if steering(s) then return s.tackleDir end
 		return oldCamera(...)
 	end)
 end
@@ -548,15 +600,16 @@ table.insert(S.conns, RunService.Heartbeat:Connect(function(dt)
 			end
 			if carrier and isEnemy(carrier) ~= false then
 				local tr = S.track[carrier]
-				local aimAt = carrier:GetPivot().Position + (tr and tr.vel or Vector3.zero) * 0.15
-				local to = (aimAt - me) * Vector3.new(1, 0, 1)
-				local dist = to.Magnitude
-				local mv = (S.meVel or Vector3.zero) * Vector3.new(1, 0, 1)
-				local lined = mv.Magnitude < 2 or mv.Unit:Dot(to.Unit) > 0.82
-				if dist > 0.5 and dist < cfg.tackleRange and lined then
-					S.tackleDir = to.Unit
-					S.tackleUntil, S.lastTackle = os.clock() + 0.05, os.clock()
-					S.tackleStatus = ("Auto tackle fired (carrier %.0f studs)"):format(dist)
+				local cp = carrier:GetPivot().Position
+				local now0 = ((cp - me) * Vector3.new(1, 0, 1)).Magnitude
+				if now0 <= cfg.tackleRange and tackleReady() then
+					local dir, dist, tt = interceptDir(me, cp, (tr and tr.vel or Vector3.zero) * Vector3.new(1, 0, 1))
+					if dir then
+						fireContest(dir, os.clock())
+						S.tackleStatus = ("Locked on: slid %.1f studs to intercept (%.2fs ahead)"):format(dist, tt)
+					else
+						S.tackleStatus = ("Tracking carrier %.1f studs away - out of slide reach"):format(now0)
+					end
 				end
 			end
 		end
@@ -2105,8 +2158,8 @@ slider(drib, "Trigger Range", 5, 20, "dribbleRange")
 liveLabel(drib, function() return S.dribbleStatus or "Dodges when an opponent rushes you with the ball" end)
 local tack = playTab:Section({ name = "Auto Tackle", side = "right" })
 toggle(tack, "Auto Tackle", "tackle")
-slider(tack, "Tackle Range", 4, 14, "tackleRange")
-liveLabel(tack, function() return S.tackleStatus or "Slides into the ball carrier when in reach" end)
+slider(tack, "Lock-on Range", 6, 20, "tackleRange")
+liveLabel(tack, function() return S.tackleStatus or "Locks onto the ball carrier and slides only when the hit is certain" end)
 
 local gkTab = win:Tab({ name = "Keeper", icon = "lucide:shield" })
 local gk = gkTab:Section({ name = "Auto Keeper", side = "left" })

@@ -18,7 +18,7 @@ Toggle the panel with **RightControl** or the minimize button. The **UI Settings
 - Height is solved for your charge, so the ball crosses the line at the chosen corner height (Auto / High / Low)
 - Power shots keep the aim through the windup
 - Works from long range (kickoff power shots, penalties) — Max Distance slider
-- Silent Aim for bicycle kicks and volleys
+- Silent Aim for bicycle kicks and volleys (aims low, since volley contact height is less predictable)
 - Keeper read: predicts where the opposing keeper will be and picks the open corner
 - Show Target marker and a last-shot readout
 
@@ -28,7 +28,7 @@ Toggle the panel with **RightControl** or the minimize button. The **UI Settings
 
 **Dribble**
 - Auto Dribble: uses the game's dribble move when an opponent rushes you while you have the ball (trigger range slider)
-- Auto Tackle: slide-tackles the ball carrier when they're in range and in your path (range slider)
+- Auto Tackle: locks onto the ball carrier, predicts where they'll be and only slides when the hit is certain, steering the slide even while you're moving (lock-on range slider)
 
 ## Notes
 
