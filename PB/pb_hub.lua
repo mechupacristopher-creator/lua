@@ -1,4 +1,4 @@
-local VERSION = "1.4.0"
+local VERSION = "1.4.2"
 local CFG_FILE = "pg_hub_cfg.json"
 
 local G = getgenv()
@@ -19,11 +19,11 @@ local ShootRemote = Remotes.InputService.Shoot
 local MeterSvc = Remotes.MeterService
 
 local cfg = {
-	green = false, timingMs = 0, stepsPerSpeed = 13.33, autoCal = false, meterCal2 = {},
+	green = false, timingMs = 0, fullOffset = 1.467, autoCal = false, meterCal3 = {},
 	speed = false, speedMult = 1.3, infStamina = false, alwaysSprint = false,
 	magnet = false, magnetRange = 25,
 	autoShoot = false, shootRange = 25, antiContest = false, openDist = 6,
-	dribbleGlide = false, gatherGlide = false, shotGlide = false, glideSpeed = 14,
+	dribbleGlide = false, gatherGlide = false, shotGlide = false, glideSpeed = 14, dribbleGlideSpeed = 7,
 	ankle = false, ankleRange = 12, combo = "Crossover, Spin, StepBack", loopCombo = false,
 	block = false, blockRange = 15, blockDelay = 170, steal = false, stealRange = 6,
 	guard = false, guardHoldG = false, guardMode = "Tight", guardDist = 4, guardCreep = 25,
@@ -32,7 +32,7 @@ local cfg = {
 }
 pcall(function() for k, v in pairs(Http:JSONDecode(readfile(CFG_FILE))) do cfg[k] = v end end)
 for _, k in ipairs({ "green", "speed", "infStamina", "alwaysSprint", "magnet", "autoShoot", "dribbleGlide", "gatherGlide", "shotGlide", "ankle", "loopCombo", "block", "steal", "guard", "selfLob", "fov", "fullbright", "noPost", "antiAfk" }) do cfg[k] = false end
-if type(cfg.meterCal2) ~= "table" then cfg.meterCal2 = {} end
+if type(cfg.meterCal3) ~= "table" then cfg.meterCal3 = {} end
 local function saveCfg() pcall(writefile, CFG_FILE, Http:JSONEncode(cfg)) end
 
 local S = { conns = {}, status = "Idle", last = "No shot yet", cfg = cfg }
@@ -109,17 +109,21 @@ local function release(reason, est, lead)
 	S.last = string.format("Released %.0f ms before the top", (lead or 0) * 1000)
 end
 
-local function leadMs(meterType)
-	return readPing() * 0.4 + cfg.timingMs + (cfg.meterCal2[meterType or ""] or 0)
+local function calKey(meterType, speed)
+	return (meterType or "") .. ":" .. string.format("%.1f", tonumber(speed) or 0)
+end
+
+local function leadMs(meterType, speed)
+	return readPing() * 0.4 + cfg.timingMs + (cfg.meterCal3[calKey(meterType, speed)] or 0)
 end
 S.leadMs = leadMs
 
 local function check()
 	if not shot or shot.released or not shot.rate then return end
 	local est = shot.prev + shot.rate * (os.clock() - shot.tprev)
-	local lead = math.max(leadMs(shot.meterType), 0) / 1000
 	shot.speed = shot.speed or tonumber(A(myChar(), "ShotSpeed")) or 1.8
-	local full = shot.m0 + cfg.stepsPerSpeed * shot.speed * shot.rate / 60
+	local lead = math.max(leadMs(shot.meterType, shot.speed), 0) / 1000
+	local full = cfg.fullOffset
 	shot.full = full
 	if (full - est) / shot.rate <= lead then release("Auto release", est, lead) end
 end
@@ -137,7 +141,7 @@ local function logShot(s, timing, contest)
 	else
 		why = "ok"
 	end
-	if s.calMs then why = why .. string.format(" | calibrated %s offset -> %d ms", tostring(s.meterType), s.calMs) end
+	if s.calMs then why = why .. string.format(" | calibrated %s offset -> %d ms", calKey(s.meterType, s.speed), s.calMs) end
 	local samples = {}
 	for _, p in ipairs(s.samples) do samples[#samples + 1] = string.format("%.0f:%.3f", p[1] * 1000, p[2]) end
 	dbg(string.format(
@@ -157,7 +161,6 @@ local function onOffset(char)
 	local mag = math.max(math.abs(o.X), math.abs(o.Y))
 	if DEBUG then table.insert(shot.samples, { now - shot.t0, mag }) end
 	if shot.prev and mag < shot.prev - 1e-3 then
-		if shot.steps and shot.speed and shot.steps >= 10 and math.abs(shot.steps / shot.speed - cfg.stepsPerSpeed) < 3 then cfg.stepsPerSpeed = cfg.stepsPerSpeed + (shot.steps / shot.speed - cfg.stepsPerSpeed) * 0.3 end
 		release("Meter peaked (late)")
 		return
 	end
@@ -198,10 +201,10 @@ conn(IF.ShowFeedback.OnClientEvent:Connect(function(model, contest, timing)
 	if timing and TIMING[timing] then
 		S.last = TIMING[timing] .. (s.relLead and string.format(" - %.0f ms before the top", s.relLead * 1000) or "")
 		if cfg.autoCal and s.relT and s.reason == "Auto release" and timing ~= 5 then
-			local key = s.meterType or ""
-			local cur = cfg.meterCal2[key] or 0
+			local key = calKey(s.meterType, s.speed)
+			local cur = cfg.meterCal3[key] or 0
 			cur = math.clamp(cur + (timing - 5) * 3, -80, 80)
-			cfg.meterCal2[key] = cur
+			cfg.meterCal3[key] = cur
 			s.calMs = cur
 			saveCfg()
 		end
@@ -214,7 +217,7 @@ end))
 conn(IF.RunGreenEffect.OnClientEvent:Connect(function(model)
 	if model == LP.Name or model == myChar() or model == LP then lastGreenT = os.clock() end
 end))
-dbg("---- loaded v" .. VERSION .. " ping " .. math.floor(readPing()) .. " offset " .. cfg.timingMs .. " stepsPerSpeed " .. cfg.stepsPerSpeed)
+dbg("---- loaded v" .. VERSION .. " ping " .. math.floor(readPing()) .. " offset " .. cfg.timingMs .. " full " .. cfg.fullOffset)
 if myChar() then watchChar(myChar()) end
 conn(workspace.Characters.ChildAdded:Connect(function(c) if c.Name == LP.Name then watchChar(c) end end))
 
@@ -285,7 +288,7 @@ conn(RunService.Stepped:Connect(function()
 		local d = moveInput()
 		if d then
 			bv.MaxForce = Vector3.new(1e5, 0, 1e5)
-			bv.Velocity = d * cfg.glideSpeed
+			bv.Velocity = d * (glideKey == "dribbleGlide" and cfg.dribbleGlideSpeed or cfg.glideSpeed)
 		end
 		return
 	end
@@ -648,14 +651,14 @@ local cal = shootTab:Section({ name = "Auto Calibrate", side = "left" })
 cal:Toggle({ name = "Auto Calibrate", default = cfg.autoCal, Callback = setCfg("autoCal") })
 cal:Label({ name = "Learns from every Early / Late result, separately for each meter." })
 cal:Button({ name = "Reset Timing", Callback = function()
-	cfg.meterCal2 = {}
+	cfg.meterCal3 = {}
 	saveCfg()
 	Library:create_notification({ name = "Timing reset", duration = 2 })
 end })
 local st = shootTab:Section({ name = "Status", side = "right" })
 liveLabel(st, function() return S.status end)
 liveLabel(st, function() return "Last shot: " .. S.last end)
-liveLabel(st, function() return string.format("Ping %.0f ms - going %.0f ms early", pingMs, math.max(leadMs("Vertical"), 0)) end)
+liveLabel(st, function() return string.format("Ping %.0f ms - going %.0f ms early", pingMs, math.max(leadMs("Vertical", 1.8), 0)) end)
 
 local function toggle(sec, name, key)
 	return sec:Toggle({ name = name, default = false, Callback = setCfg(key) })
@@ -681,6 +684,7 @@ slider(sg, "Glide Speed", 4, 20, "glideSpeed")
 local dribTab = win:Tab({ name = "Dribbling", icon = "lucide:footprints" })
 local dg = dribTab:Section({ name = "Dribble", side = "left" })
 toggle(dg, "Dribble Glide", "dribbleGlide")
+slider(dg, "Dribble Glide Speed", 2, 14, "dribbleGlideSpeed")
 toggle(dg, "Auto Ankle Breaker", "ankle")
 slider(dg, "Ankle Range (studs)", 4, 20, "ankleRange")
 local cb = dribTab:Section({ name = "Combos", side = "right" })
