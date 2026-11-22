@@ -1,4 +1,4 @@
-local VERSION = "1.3.2"
+local VERSION = "1.4.0"
 local CFG_FILE = "ssp_aim_cfg.json"
 
 local G = getgenv()
@@ -25,11 +25,17 @@ local KickLead = require(RS.client.play.kick_lead)
 local Actions = require(RS.client.input.actions)
 local Volley = require(RS.client.play.volley)
 local VStrike = require(RS.shared.play.volley_strike)
+local Comp = require(RS.shared.components)
+local CComp = require(RS.client.ccomponents)
+local Keeper = require(RS.shared.keeper)
+local Present = require(RS.client.ball.present)
+local Control = require(RS.client.input.control)
 if setthreadidentity then pcall(setthreadidentity, 8) end
 
 local cfg = {
 	aim = false, curve = true, height = "Auto", showTarget = false, range = 220, margin = 2.2,
 	volley = false, dribble = false, dribbleRange = 10, tackle = false, tackleRange = 8,
+	save = false, gkPosition = false,
 }
 pcall(function() for k, v in pairs(Http:JSONDecode(readfile(CFG_FILE))) do cfg[k] = v end end)
 local function saveCfg() pcall(writefile, CFG_FILE, Http:JSONEncode(cfg)) end
@@ -301,7 +307,105 @@ local function volleySol()
 	return sol
 end
 
-local HOOKED = { Look.kick, Look.aim, Look.camera, Power.curve, Power.bend, Shot.fire, KickLead.aim, Actions.pressed }
+local function findWorld()
+	local w = S.world
+	if w then
+		local ok, has = pcall(function() for _ in w:query(Comp.FOOTBALL) do return true end end)
+		if ok and has then return w end
+	end
+	S.world = nil
+	for _, t in ipairs(getgc(true)) do
+		if type(t) == "table" and rawget(t, "entity_index") ~= nil and rawget(t, "query") ~= nil then
+			local ok, has = pcall(function() for _ in t:query(Comp.FOOTBALL) do return true end end)
+			if ok and has then S.world = t return t end
+		end
+	end
+end
+
+local function myEntity(w)
+	for e in w:query(CComp.OWNED) do
+		if w:has(e, Comp.CHARACTER) then return e end
+	end
+end
+
+local function keeperStep(now)
+	if not (cfg.save or cfg.gkPosition or cfg.tackle) then S.gkMove, S.isKeeper = nil, false return end
+	if now - (S.worldCheck or 0) > 2 or not S.world then S.worldCheck = now findWorld() end
+	local w = S.world
+	if not w then S.gkMove = nil return end
+	local ok = pcall(function()
+		local me = myEntity(w)
+		S.isKeeper = me ~= nil and w:has(me, Comp.GOALKEEPER)
+		if not S.isKeeper or not (cfg.save or cfg.gkPosition) then
+			S.gkMove = nil
+			if not S.isKeeper then S.gkStatus = "Not keeper right now" end
+			return
+		end
+		local side = w:get(me, Comp.side)
+		if side ~= Match.WEST and side ~= Match.EAST then S.gkMove = nil return end
+		local mePos = focusOf(LP.UserId)
+		if not mePos then return end
+		local goal = Match.goal_of(side)
+		local depth = math.clamp(math.abs(mePos.X - goal.X), 0.5, 12)
+		local ball
+		for e in w:query(Comp.FOOTBALL) do ball = e break end
+		if not ball then S.gkMove = nil return end
+		local bp, bv, bs = Present.now(w, ball)
+		if not bp then return end
+		bv, bs = bv or Vector3.zero, bs or Vector3.zero
+		local holder = w:target(ball, Comp.HELD_BY, 0)
+		local towardGoal = (goal.X - bp.X) * bv.X > 0 and bv.Magnitude > 12
+		local t, hit
+		if not holder and towardGoal then t, hit = Keeper.plane(bp, bv, bs, side, depth) end
+		if t and hit and math.abs(hit.Z) < HALF_W + 2.5 and hit.Y < BAR + 2 then
+			local flat = Vector3.new(hit.X - mePos.X, 0, hit.Z - mePos.Z)
+			local d = flat.Magnitude
+			S.gkStatus = ("Shot incoming: %.2fs, %.1f studs %s, height %.1f"):format(t, d, hit.Z > mePos.Z and "+z" or "-z", hit.Y)
+			local needCatch = d < 2.5 and hit.Y < Keeper.CATCH_RISE
+			if cfg.save and not needCatch and now - (S.lastDive or 0) > 0.8 then
+				local needed = d / Keeper.DIVE_SPEED + Keeper.DIVE_REACTION + 0.06
+				if t <= needed and d > 0.3 then
+					S.gkMove = nil
+					S.tackleDir = flat.Unit
+					S.tackleUntil, S.lastDive, S.lastTackle = now + 0.05, now, now
+					S.gkStatus = ("Dived %.1f studs toward the ball (%.2fs before it crossed)"):format(d, t)
+					return
+				end
+			end
+			if cfg.gkPosition then
+				local dz = hit.Z - mePos.Z
+				S.gkMove = math.abs(dz) > 0.6 and Vector3.new(0, 0, math.sign(dz)) or nil
+			end
+			return
+		end
+		if not cfg.gkPosition then S.gkMove = nil return end
+
+		local lineX = goal.X - math.sign(goal.X) * depth
+		local k = (lineX - bp.X) / (goal.X - bp.X)
+		local coverZ = bp.Z + (0 - bp.Z) * math.clamp(k, 0, 1)
+		if holder then
+			local hm
+			for _, m in ipairs(humanoids()) do
+				if ((m:GetPivot().Position - bp) * Vector3.new(1, 0, 1)).Magnitude < 3.5 then hm = m break end
+			end
+			if hm and isEnemy(hm) ~= false then
+				local lv = hm:GetPivot().LookVector
+				if math.abs(lv.X) > 0.05 and (goal.X - bp.X) * lv.X > 0 then
+					local faceZ = bp.Z + lv.Z * (lineX - bp.X) / lv.X
+					coverZ = coverZ * 0.5 + math.clamp(faceZ, -HALF_W, HALF_W) * 0.5
+				end
+			end
+		end
+		coverZ = math.clamp(coverZ, -(HALF_W - 1.5), HALF_W - 1.5)
+		local target = Vector3.new(lineX, mePos.Y, coverZ)
+		local to = (target - mePos) * Vector3.new(1, 0, 1)
+		S.gkMove = to.Magnitude > 0.8 and to.Unit * math.clamp(to.Magnitude / 4, 0.35, 1) or nil
+		S.gkStatus = ("Positioning: covering z %.1f"):format(coverZ)
+	end)
+	if not ok then S.gkMove = nil end
+end
+
+local HOOKED = { Look.kick, Look.aim, Look.camera, Power.curve, Power.bend, Shot.fire, KickLead.aim, Actions.pressed, Control.move }
 if restorefunction and isfunctionhooked then
 	for _, f in ipairs(HOOKED) do
 		if isfunctionhooked(f) then pcall(restorefunction, f) end
@@ -368,6 +472,13 @@ do
 		if name == "tackle" and s and s.tackleUntil and os.clock() < s.tackleUntil then return true end
 		return oldPressed(name, ...)
 	end)
+	local oldMove
+	oldMove = hookfunction(Control.move, function(...)
+		local r = oldMove(...)
+		local s = st()
+		if s and s.gkMove and (typeof(r) ~= "Vector3" or r.Magnitude < 0.1) then return s.gkMove end
+		return r
+	end)
 	local oldCamera
 	oldCamera = hookfunction(Look.camera, function(...)
 		local s = st()
@@ -423,7 +534,9 @@ table.insert(S.conns, RunService.Heartbeat:Connect(function(dt)
 			S.meVel = prev and (S.meVel or Vector3.zero):Lerp((me - prev) / math.max(dt, 1 / 240), 0.3) or Vector3.zero
 			S.mePos = me
 		end
-		if cfg.tackle and me and os.clock() - (S.lastTackle or 0) > 0.3 then
+		keeperStep(os.clock())
+
+		if cfg.tackle and not S.isKeeper and me and os.clock() - (S.lastTackle or 0) > 0.3 then
 			local ball = ballPos()
 			local carrier, cd
 			if ball and ball.Y < 3 then
@@ -1994,6 +2107,14 @@ local tack = playTab:Section({ name = "Auto Tackle", side = "right" })
 toggle(tack, "Auto Tackle", "tackle")
 slider(tack, "Tackle Range", 4, 14, "tackleRange")
 liveLabel(tack, function() return S.tackleStatus or "Slides into the ball carrier when in reach" end)
+
+local gkTab = win:Tab({ name = "Keeper", icon = "lucide:shield" })
+local gk = gkTab:Section({ name = "Auto Keeper", side = "left" })
+toggle(gk, "Auto Save (dive)", "save")
+toggle(gk, "Auto Position", "gkPosition")
+gk:Label({ name = "Works when you're the goalkeeper. Dives at the last moment toward where the ball (curve included) will cross your line." })
+local gkStat = gkTab:Section({ name = "Status", side = "right" })
+liveLabel(gkStat, function() return S.gkStatus or "Waiting" end)
 
 local miscTab = win:Tab({ name = "Misc", icon = "lucide:info" })
 local info = miscTab:Section({ name = "Info", side = "left" })
