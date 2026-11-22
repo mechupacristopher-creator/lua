@@ -25,7 +25,8 @@ Toggle the panel with **RightControl** or the minimize button. The **UI Settings
 
 **Keeper**
 - Auto Save: when you're the goalkeeper, predicts where the shot (curve included) crosses your line and dives at the last moment
-- Auto Position (experimental, off by default): walks along your line to cover the angle between the ball and the goal (only when you're not moving yourself)
+- Shooter read: reads the opponent's real aim (body rotation + replicated aim offset) while they hold or charge the ball and shows where on your line they're aiming
+- Auto Position (off by default): moves along your line toward where the shooter is aiming, blended with covering the angle (only when you're not moving yourself)
 
 **Dribble**
 - Auto Dribble: uses the game's dribble move when an opponent rushes you while you have the ball (trigger range slider)

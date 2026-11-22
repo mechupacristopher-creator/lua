@@ -1,4 +1,4 @@
-local VERSION = "1.6.0"
+local VERSION = "1.7.0"
 local CFG_FILE = "ssp_aim_cfg.json"
 
 local G = getgenv()
@@ -433,6 +433,46 @@ local function interceptDir(me, target, vel)
 	return nil
 end
 
+local SHOT_ACTIONS = { [2] = "charging", [3] = "shooting", [35] = "shooting", [36] = "shooting", [37] = "shooting", [14] = "volleying", [13] = "heading" }
+local function aimOf(w, e)
+	local q = w:get(e, Comp.rotation)
+	if type(q) ~= "table" or not q.y or not q.w then return nil end
+	local yaw = 2 * math.atan2(q.y, q.w)
+	local f = Vector3.new(-math.sin(yaw), 0, -math.cos(yaw))
+	local lk = w:get(e, Comp.look)
+	local o = typeof(lk) == "Vector3" and lk.X or 0
+	return (f * math.cos(o) + Vector3.new(f.Z, 0, -f.X) * math.sin(o)).Unit
+end
+
+local function readShooter(w, me, side, holder, bp, goal, lineX)
+	local mySide = side
+	local best, bestKind, bestD
+	local now = Clock.server()
+	for e in w:query(Comp.CHARACTER) do
+		if e ~= me then
+			local es = w:get(e, Comp.side)
+			if es == nil or es ~= mySide then
+				local act = w:get(e, Comp.action)
+				local kind = type(act) == "table" and act.kind
+				local fresh = type(act) == "table" and act.at and now - act.at < 1.5
+				local label = (e == holder and "on the ball") or (fresh and SHOT_ACTIONS[kind])
+				if label then
+					local p = entPos(w, e)
+					local d = p and ((p - bp) * Vector3.new(1, 0, 1)).Magnitude or math.huge
+					if d < 8 and (not bestD or d < bestD) then best, bestKind, bestD = e, label, d end
+				end
+			end
+		end
+	end
+	if not best then return nil end
+	local dir = aimOf(w, best)
+	if not dir or math.abs(dir.X) < 0.05 or (goal.X - bp.X) * dir.X <= 0 then
+		return { kind = bestKind, onTarget = false }
+	end
+	local z = bp.Z + dir.Z * (lineX - bp.X) / dir.X
+	return { kind = bestKind, z = z, onTarget = math.abs(z) < HALF_W + 3 }
+end
+
 local function keeperStep(now)
 	if not (cfg.save or cfg.gkPosition or cfg.tackle) then S.gkMove, S.isKeeper = nil, false return end
 	local w = findWorld()
@@ -484,16 +524,21 @@ local function keeperStep(now)
 			end
 			return
 		end
-		if not cfg.gkPosition then S.gkMove, S.gkStatus = nil, "Ready - waiting for a shot" return end
-
 		local lineX = goal.X - math.sign(goal.X) * depth
+		local read = readShooter(w, me, side, holder, bp, goal, lineX)
+		local readText = read and (read.z and ("Shooter %s, aiming z %.1f%s"):format(read.kind, read.z, read.onTarget and "" or " (off target)")
+			or ("Shooter %s, not aiming at goal"):format(read.kind)) or "No shooter"
+		if not cfg.gkPosition then S.gkMove, S.gkStatus = nil, "Ready | " .. readText return end
+
 		local k = (lineX - bp.X) / (goal.X - bp.X)
 		local coverZ = bp.Z + (0 - bp.Z) * math.clamp(k, 0, 1)
+		if read and read.z and read.onTarget then coverZ = coverZ * 0.3 + read.z * 0.7 end
 		coverZ = math.clamp(coverZ, -(HALF_W - 1.5), HALF_W - 1.5)
 		local target = Vector3.new(lineX, mePos.Y, coverZ)
 		local to = (target - mePos) * Vector3.new(1, 0, 1)
-		S.gkMove = to.Magnitude > 0.8 and to.Unit * math.clamp(to.Magnitude / 4, 0.35, 1) or nil
-		S.gkStatus = ("Positioning: covering z %.1f"):format(coverZ)
+
+		S.gkMove = to.Magnitude > 1.2 and to.Unit * math.clamp(to.Magnitude / 5, 0.25, 1) or nil
+		S.gkStatus = ("Covering z %.1f | %s"):format(coverZ, readText)
 	end)
 	if not ok then S.gkMove, S.gkStatus = nil, "Keeper error: " .. tostring(err) end
 end
