@@ -1,4 +1,4 @@
-local VERSION = "1.5.1"
+local VERSION = "1.5.2"
 local CFG_FILE = "ssp_aim_cfg.json"
 
 local G = getgenv()
@@ -71,7 +71,8 @@ end
 
 local origFire = Shot.fire
 
-local function fly(start, gx, yaw, pitch, launch)
+local SIDE_WALL = Match.TOUCH_LINE - 0.8
+local function fly(start, gx, yaw, pitch, launch, walls)
 	local p = math.rad(pitch)
 	local dir = Vector3.new(math.cos(yaw) * math.cos(p), math.sin(p), math.sin(yaw) * math.cos(p))
 	local v, spin = launch(dir)
@@ -80,6 +81,10 @@ local function fly(start, gx, yaw, pitch, launch)
 	while t < 4 do
 		v, spin = Ball.integrate(v, spin, DT, false)
 		local np = pos + v * DT
+
+		if walls and (math.abs(np.Z) > SIDE_WALL or (math.abs(gx - np.X) < 1.2 and math.abs(np.Z) > HALF_W - 0.35)) then
+			return false
+		end
 		if (np.X - gx) * sx >= 0 then
 			local a = (gx - pos.X) / (np.X - pos.X)
 			local hit = pos + (np - pos) * a
@@ -118,6 +123,7 @@ local function solve(start, gx, tz, ty, launch)
 		end
 	end
 	if best then
+		if fly(start, gx, best.yaw, best.pitch, launch, true) == false then return nil end
 		local p = math.rad(best.pitch)
 		best.dir = Vector3.new(math.cos(best.yaw) * math.cos(p), math.sin(p), math.sin(best.yaw) * math.cos(p))
 	end
@@ -241,7 +247,13 @@ local function corners(ball, gx, keeper, volley)
 			table.insert(list, { z = z, y = y, score = score })
 		end
 	end
+
+	local wing = math.abs(ball.Z) > 4 and math.sign(ball.Z) or 0
 	table.sort(list, function(a, b)
+		if wing ~= 0 then
+			local fa, fb = math.sign(a.z) ~= wing, math.sign(b.z) ~= wing
+			if fa ~= fb then return fa end
+		end
 		if volley and a.y ~= b.y then return a.y > b.y end
 		return a.score > b.score
 	end)
@@ -564,7 +576,7 @@ do
 		return oldCamera(...)
 	end)
 end
-S.volleySol, S.computeVolley, S.solve, S.shotLaunch = volleySol, computeVolley, solve, shotLaunch
+S.volleySol, S.computeVolley, S.solve, S.shotLaunch, S.corners = volleySol, computeVolley, solve, shotLaunch, corners
 
 local marker = Instance.new("Part")
 marker.Name = "SSPAimTarget"

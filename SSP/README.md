@@ -19,7 +19,8 @@ Toggle the panel with **RightControl** or the minimize button. The **UI Settings
 - Power shots keep the aim through the windup
 - Works from long range (kickoff power shots, penalties) — Max Distance slider
 - Silent Aim for bicycle kicks and volleys: goes for the top corners (with its own self-correction) so the ball keeps its pace
-- Keeper read: predicts where the opposing keeper will be and picks the open corner
+- Far post from the wings (left of goal aims right and vice versa); from the middle the keeper read picks the open corner
+- Curves that would clip the side boards or the end wall are rejected automatically
 - Show Target marker and a last-shot readout
 
 **Keeper**
