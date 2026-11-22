@@ -1,4 +1,4 @@
-local VERSION = "1.5.0"
+local VERSION = "1.5.1"
 local CFG_FILE = "ssp_aim_cfg.json"
 
 local G = getgenv()
@@ -209,14 +209,15 @@ end
 
 local function corners(ball, gx, keeper, volley)
 
-	local bias = G.SSPAimBias or { y = 0, z = 0 }
+	local bias = (volley and G.SSPVolleyBias) or (not volley and G.SSPAimBias) or { y = 0, z = 0 }
 	local zIn = math.clamp(HALF_W - cfg.margin - bias.z - (volley and 0.6 or 0), HALF_W - 5, HALF_W - 1.6)
 	local zs = { zIn, -zIn }
 	local ys = {}
 	if volley then
 
-		if cfg.height ~= "High" then table.insert(ys, 1.6) table.insert(ys, 4) end
-		table.insert(ys, BAR - 3)
+		if cfg.height ~= "Low" then table.insert(ys, math.clamp(BAR - 2.6 - bias.y, BAR - 4.5, BAR - 1.8)) end
+		table.insert(ys, math.clamp(4 - bias.y, 3, 5))
+		if cfg.height == "Low" then table.insert(ys, 1.6) end
 	else
 		if cfg.height ~= "Low" then table.insert(ys, math.clamp(BAR - 2 - bias.y, BAR - 4, BAR - 1.4)) end
 		if cfg.height ~= "High" then table.insert(ys, math.clamp(1.6 - bias.y, 1.1, 3.5)) end
@@ -241,10 +242,35 @@ local function corners(ball, gx, keeper, volley)
 		end
 	end
 	table.sort(list, function(a, b)
-		if volley and a.y ~= b.y then return a.y < b.y end
+		if volley and a.y ~= b.y then return a.y > b.y end
 		return a.score > b.score
 	end)
 	return list
+end
+
+local function watchShot(sol, biasKey, label)
+	task.spawn(function()
+		local t0, prev = os.clock(), ballPos()
+		while os.clock() - t0 < 4 and alive() do
+			task.wait()
+			local p = ballPos()
+			if p and prev and (p.X - sol.target.X) * (prev.X - sol.target.X) <= 0 and (p - prev).Magnitude < 20 then
+				local a = (sol.target.X - prev.X) / (p.X - prev.X)
+				local hit = prev + (p - prev) * a
+				S.last = ("%s: target z %.1f y %.1f | crossed z %.1f y %.1f"):format(label, sol.target.Z, sol.target.Y, hit.Z, hit.Y)
+				local ey = hit.Y - sol.target.Y
+				local ez = math.abs(hit.Z) - math.abs(sol.target.Z)
+				if math.abs(ey) < 3 and math.abs(ez) < 4 then
+					local b = G[biasKey] or { y = 0, z = 0 }
+					b.y = math.clamp(b.y * 0.7 + ey * 0.3, -1.5, 1.5)
+					b.z = math.clamp(b.z * 0.7 + ez * 0.3, -2, 2)
+					G[biasKey] = b
+				end
+				return
+			end
+			prev = p
+		end
+	end)
 end
 
 local function compute(force)
@@ -587,6 +613,18 @@ table.insert(S.conns, RunService.Heartbeat:Connect(function(dt)
 			S.mePos = me
 		end
 		keeperStep(os.clock())
+		local okv, started = pcall(Volley.get)
+		if okv and started and S.vsol then S.volleyAt, S.volleySolUsed = os.clock(), S.vsol end
+		local bp = ballPos()
+		if bp and S.ballPrevPos and S.volleySolUsed and os.clock() - (S.volleyAt or 0) < 0.8 then
+			local vel = (bp - S.ballPrevPos) / math.max(dt, 1 / 240)
+			local tx = S.volleySolUsed.target.X
+			if vel.Magnitude > 35 and (tx - bp.X) * vel.X > 0 then
+				watchShot(S.volleySolUsed, "SSPVolleyBias", "Last volley")
+				S.volleySolUsed = nil
+			end
+		end
+		S.ballPrevPos = bp
 
 		if cfg.tackle and not S.isKeeper and me and os.clock() - (S.lastTackle or 0) > 0.3 then
 			local ball = ballPos()
@@ -635,34 +673,7 @@ table.insert(S.conns, RunService.Heartbeat:Connect(function(dt)
 		end
 	end
 	if not (cfg.aim and charging) then
-		if S.sol and not S.watching then
-			local sol = S.sol
-			S.watching = true
-			task.spawn(function()
-				local t0, prev = os.clock(), ballPos()
-				while os.clock() - t0 < 4 and alive() do
-					task.wait()
-					local p = ballPos()
-					if p and prev and (p.X - sol.target.X) * (prev.X - sol.target.X) <= 0 and (p - prev).Magnitude < 20 then
-						local a = (sol.target.X - prev.X) / (p.X - prev.X)
-						local hit = prev + (p - prev) * a
-						S.last = ("Last shot: target z %.1f y %.1f | crossed z %.1f y %.1f"):format(sol.target.Z, sol.target.Y, hit.Z, hit.Y)
-
-						local ey = hit.Y - sol.target.Y
-						local ez = math.abs(hit.Z) - math.abs(sol.target.Z)
-						if math.abs(ey) < 3 and math.abs(ez) < 4 then
-							local b = G.SSPAimBias or { y = 0, z = 0 }
-							b.y = math.clamp(b.y * 0.7 + ey * 0.3, -1.5, 1.5)
-							b.z = math.clamp(b.z * 0.7 + ez * 0.3, -2, 2)
-							G.SSPAimBias = b
-						end
-						break
-					end
-					prev = p
-				end
-				S.watching = false
-			end)
-		end
+		if S.sol then watchShot(S.sol, "SSPAimBias", "Last shot") end
 		S.sol = nil
 		marker.Transparency = 1
 		return

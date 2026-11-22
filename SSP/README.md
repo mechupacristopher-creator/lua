@@ -18,7 +18,7 @@ Toggle the panel with **RightControl** or the minimize button. The **UI Settings
 - Height is solved for your charge, so the ball crosses the line at the chosen corner height (Auto / High / Low)
 - Power shots keep the aim through the windup
 - Works from long range (kickoff power shots, penalties) — Max Distance slider
-- Silent Aim for bicycle kicks and volleys (aims low, since volley contact height is less predictable)
+- Silent Aim for bicycle kicks and volleys: goes for the top corners (with its own self-correction) so the ball keeps its pace
 - Keeper read: predicts where the opposing keeper will be and picks the open corner
 - Show Target marker and a last-shot readout
 
