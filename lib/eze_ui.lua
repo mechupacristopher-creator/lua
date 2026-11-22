@@ -1398,7 +1398,6 @@ function library:discord_prompt(invite)
     if genv.EzeDiscordShown then return end
     genv.EzeDiscordShown = true
 
-    local copied = pcall(setclipboard or toclipboard, invite)
 
     local screen = library:create("ScreenGui", {Parent = ui_parent, Name = "EzeDiscord", ResetOnSpawn = false, DisplayOrder = 999})
     local shade = library:create("Frame", {
@@ -1461,7 +1460,7 @@ function library:discord_prompt(invite)
         b.MouseLeave:Connect(function() library:tween(b, {BackgroundColor3 = base}, 0.15) end)
         return b
     end
-    local copyBtn = button(copied and "Copied ✓" or "Copy link", 16, 200, true)
+    local copyBtn = button("Join the Discord", 16, 200, true)
     local laterBtn = button("Later", 224, 100, false)
 
     local closing = false
@@ -1474,7 +1473,7 @@ function library:discord_prompt(invite)
 
     copyBtn.MouseButton1Click:Connect(function()
         if pcall(setclipboard or toclipboard, invite) then
-            copyBtn.Text = "Copied ✓"
+            copyBtn.Text = "Link copied ✓"
             library:create_notification({ name = "Discord invite copied to clipboard", duration = 3 })
         else
             copyBtn.Text = "Copy failed"
