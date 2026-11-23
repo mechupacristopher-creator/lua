@@ -651,21 +651,56 @@ local function abilityTick()
 	end
 end
 
-local pathOpen, lastPathPress = nil, 0
+local function pathsOf(cls) return gameCall(function() return type(cls.UpgradePaths) == "table" and #cls.UpgradePaths > 0 and cls.UpgradePaths or nil end) end
+local function classOf(classId) return classId and gameCall(function() return G.Item:FromId(classId) end) end
+
+local function pathSubject(ents)
+	for _, m in ipairs(myPhantoms()) do
+		local cls = not m:GetAttribute("SelectedPath") and classOf(m:GetAttribute("ClassId"))
+		if cls and pathsOf(cls) then return m:GetAttribute("ClassId"), cls end
+	end
+	for _, e in pairs(ents) do
+		if type(e) == "table" and e.ownerId == lp.UserId and not e.SelectedPath then
+			local cls = classOf(e.classId)
+			if cls and pathsOf(cls) then return e.classId, cls end
+		end
+	end
+end
+
+local lastPathPress, lastPathNote = 0, nil
 local function pathTick()
 	if not cfg.autoPath then return end
 	local sel = gameCall(function() return G.mainGui:FindFirstChild("UpgradePathSelection", true) end)
-	if not (sel and sel.Visible) then pathOpen = nil return end
-	if os.clock() - lastPathPress < 1.5 then return end
+	if not (sel and sel.Visible) then lastPathNote = nil return end
+	if os.clock() - lastPathPress < 1 then return end
 	lastPathPress = os.clock()
-	pathOpen = (pathOpen or 0) + 1
-	local want = cfg.pathPick or 1
-	local pick = pathOpen % 2 == 1 and want or (want == 1 and 2 or 1)
+	local ents = findEntities() or {}
+	local classId, cls = pathSubject(ents)
+	local paths = cls and pathsOf(cls)
+	local name = cls and unitName(cls)
+	local want = name and cfg["path_" .. name] or 1
+	local function taken(i)
+		if not (paths and paths[i] and paths[i].IsUnique) then return false end
+		for _, o in pairs(ents) do
+			if type(o) == "table" and o.classId == classId and o.SelectedPath == i then return true end
+		end
+		local folder = workspace:FindFirstChild("PhantomTowers")
+		for _, o in ipairs(folder and folder:GetChildren() or {}) do
+			if o:GetAttribute("ClassId") == classId and o:GetAttribute("SelectedPath") == i then return true end
+		end
+		return false
+	end
+	local pick = want
+	if taken(want) then pick = want == 1 and 2 or 1 end
 	local frame = sel:FindFirstChild("Frame")
 	local b = frame and frame:FindFirstChild(tostring(pick))
 	if b and b.Visible then
 		press(b.Activated)
-		if pathOpen <= 2 then notify("Path", "Picked Path " .. pick) end
+		local note = tostring(name) .. pick
+		if note ~= lastPathNote then
+			lastPathNote = note
+			notify("Path", string.format("%s → Path %d%s", name or "Unit", pick, pick ~= want and " (Path " .. want .. " is unique and taken)" or ""))
+		end
 	end
 end
 
@@ -882,7 +917,7 @@ local queue = queue_on_teleport or (syn and syn.queue_on_teleport)
 if queue and not getgenv().TD_QUEUED then
 	getgenv().TD_QUEUED = true
 
-	pcall(queue, 'if isfile("td_macro.lua") then loadstring(readfile("td_macro.lua"))() else loadstring(game:HttpGet("https://raw.githubusercontent.com/mechupacristopher-creator/lua/main/UTD/eze_hub_utd.lua"))() end')
+	pcall(queue, 'getgenv().EzeDiscordShown = true if isfile("td_macro.lua") then loadstring(readfile("td_macro.lua"))() else loadstring(game:HttpGet("https://raw.githubusercontent.com/mechupacristopher-creator/lua/main/UTD/eze_hub_utd.lua"))() end')
 end
 
 local C = {
@@ -1107,8 +1142,17 @@ local function buildUnits()
 
 	local pathCard = section(unitsPage, "Unit paths", 3)
 	toggle(pathCard, "Auto pick path", "For units with paths (Bomb Girl, Krumi, Claudius…), placed or ghost", "autoPath")
-	cfg.pathPick = cfg.pathPick or 1
-	segmented(pathCard, "Path", "If another player already has a unique path, the other one is used.", "pathPick", { { 1, "①  Path 1" }, { 2, "②  Path 2" } })
+	local any = false
+	for _, t in ipairs(equipped()) do
+		if pathsOf(t.Class) then
+			any = true
+			local key = "path_" .. unitName(t)
+			cfg[key] = cfg[key] or cfg.pathPick or 1
+			segmented(pathCard, unitName(t), nil, key, { { 1, "①  Path 1" }, { 2, "②  Path 2" } })
+		end
+	end
+	hint(pathCard, any and "Each unit uses its own path. A unique path can only be on one unit per match: if another one already has it, the other path is used."
+		or "None of your equipped units has paths. Equip one and press Reload units.")
 end
 buildUnits()
 

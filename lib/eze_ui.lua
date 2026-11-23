@@ -1397,6 +1397,10 @@ function library:discord_prompt(invite)
     local genv = getgenv and getgenv() or _G
     if genv.EzeDiscordShown then return end
     genv.EzeDiscordShown = true
+    local stamp = "eze_discord_seen.txt"
+    local ok, last = pcall(function() return isfile(stamp) and tonumber(readfile(stamp)) end)
+    if ok and last and os.time() - last < 900 then return end
+    pcall(writefile, stamp, tostring(os.time()))
 
 
     local screen = library:create("ScreenGui", {Parent = ui_parent, Name = "EzeDiscord", ResetOnSpawn = false, DisplayOrder = 999})

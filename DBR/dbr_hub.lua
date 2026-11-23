@@ -68,7 +68,7 @@ local function anyOn() return cfg.farm or cfg.dragon or cfg.quests or cfg.hallow
 
 local function queueReload()
 	if not queue_on_teleport then return end
-	local src = ('if isfile and isfile("%s") then loadstring(readfile("%s"))() elseif "%s" ~= "" then loadstring(game:HttpGet("%s"))() end')
+	local src = ('getgenv().EzeDiscordShown = true if isfile and isfile("%s") then loadstring(readfile("%s"))() elseif "%s" ~= "" then loadstring(game:HttpGet("%s"))() end')
 		:format(FILE, FILE, SOURCE_URL, SOURCE_URL)
 	pcall(queue_on_teleport, src)
 end
