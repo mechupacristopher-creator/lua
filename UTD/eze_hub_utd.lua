@@ -53,6 +53,7 @@ cfg.cards = nil
 cfg.recNames = cfg.recNames or {}
 if cfg.autoCards == nil then cfg.autoCards = true end
 if cfg.autoAbility == nil then cfg.autoAbility = true end
+if cfg.autoPath == nil then cfg.autoPath = true end
 cfg.stats.wins = cfg.stats.wins or 0
 local function save() pcall(writefile, CFG_FILE, Http:JSONEncode(cfg)) end
 
@@ -635,6 +636,35 @@ local function abilityTick()
 	end
 end
 
+local function pathsOf(cls) return gameCall(function() return type(cls.UpgradePaths) == "table" and #cls.UpgradePaths > 0 and cls.UpgradePaths or nil end) end
+local pathTried, lastPathCheck = {}, 0
+local function pathTick()
+	if not cfg.autoPath or os.clock() - lastPathCheck < 1 then return end
+	lastPathCheck = os.clock()
+	local ents = findEntities() or {}
+	for eid, e in pairs(myTowers()) do
+		local cls = not e.SelectedPath and gameCall(function() return G.Item:FromId(e.classId) end)
+		local paths = cls and pathsOf(cls)
+		if paths and os.clock() - (pathTried[eid] or 0) > 3 then
+			local function taken(i)
+				if not paths[i].IsUnique then return false end
+				for oid, o in pairs(ents) do
+					if type(o) == "table" and tostring(oid) ~= eid and o.classId == e.classId and o.SelectedPath == i then return true end
+				end
+				return false
+			end
+			local want = cfg["path_" .. unitName(cls)] or 1
+			local pick = (paths[want] and not taken(want)) and want or nil
+			if not pick then for i in ipairs(paths) do if not taken(i) then pick = i break end end end
+			local cost = pick and gameCall(function() return e:GetNextUpgradeCost(pick) end)
+			if pick and type(cost) == "number" and cash() >= cost then
+				pathTried[eid] = os.clock()
+				fire("PlayerUpgradeTower", eid, pick)
+			end
+		end
+	end
+end
+
 local BOUNTY_NAMES = { "Easy", "Hard", "Extreme" }
 local lastBountyTry = 0
 local function selectedBounty() return gameCall(function() return G.data.selectedBounty end) or 0 end
@@ -831,6 +861,7 @@ local function step()
 		return
 	end
 	abilityTick()
+	pathTick()
 	if recording then
 		status = string.format("⏺ Recording… %d steps", #recSteps)
 	elseif cfg.mode == "recorded" and cfg.recordings[mapKey()] then
@@ -1072,6 +1103,24 @@ local function buildUnits()
 		unitRows[t.id] = { capL = capL, u = u, limit = limit }
 	end
 	button(card, "↻  Reload units", "normal", buildUnits)
+
+	local pathCard
+	for _, t in ipairs(equipped()) do
+		local paths = pathsOf(t.Class)
+		if paths then
+			if not pathCard then
+				pathCard = section(unitsPage, "Unit paths", 3)
+				toggle(pathCard, "Auto pick path", "Picks the path below on the first upgrade; if it's a unique path someone else took, uses another", "autoPath")
+			end
+			local name = unitName(t)
+			local key = "path_" .. name
+			cfg[key] = cfg[key] or 1
+			local opts = {}
+			for i, p in ipairs(paths) do opts[i] = { i, tostring(p.DisplayName or ("Path " .. i)) .. (p.IsUnique and " ★" or "") } end
+			segmented(pathCard, name, nil, key, opts)
+		end
+	end
+	if pathCard then hint(pathCard, "★ = unique: only one per match.") end
 end
 buildUnits()
 

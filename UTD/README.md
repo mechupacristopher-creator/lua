@@ -23,6 +23,7 @@ Toggle the panel with **RightControl** (change it in the **UI Settings** tab). D
 - Auto place with per-unit on/off and limits
 - Auto dragons (turns on the game's own auto button) and Auto Shen Long
 - Auto ability
+- Auto pick path for units with paths (Bomb Girl, Krumi, Claudius…): choose the path per unit, falls back to another if a unique path is taken
 
 **Recording**
 - Record your placements and sells per map, rename, delete
