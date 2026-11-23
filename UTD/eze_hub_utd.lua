@@ -888,6 +888,26 @@ local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/mechu
 local window = Library:window({ name = "Eze Hub" })
 local screen = guiParent:FindFirstChild("MonolithUI")
 
+cfg.uiScale = cfg.uiScale or ((UIS.TouchEnabled and not UIS.KeyboardEnabled) and 0.7 or 1)
+local mainFrame = screen and screen:FindFirstChildOfClass("Frame")
+local uiScale
+if mainFrame then
+	mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+	mainFrame.Position = UDim2.fromScale(0.5, 0.5)
+	uiScale = new("UIScale", { Scale = cfg.uiScale }, mainFrame)
+	local minBtn
+	for _, o in ipairs(mainFrame:GetDescendants()) do
+		if o:IsA("TextButton") and o.Position.X.Scale == 1 and o.Position.X.Offset == -70 then minBtn = o break end
+	end
+	if minBtn then
+
+		if cfg.minimized then
+			for _, c in ipairs(getconnections(minBtn.MouseButton1Click)) do pcall(function() c:Fire() end) end
+		end
+		bind(minBtn.MouseButton1Click:Connect(function() cfg.minimized = not cfg.minimized save() end))
+	end
+end
+
 local function addTab(name, _, order)
 	local icons = { Main = "lucide:home", Units = "lucide:users", Recording = "lucide:circle-dot", Cards = "lucide:layers", Halloween = "lucide:ghost", Settings = "lucide:settings" }
 	return { tab = window:Tab({ name = name, icon = icons[name] or "lucide:folder" }), wrappers = {}, wide = false }
@@ -1298,6 +1318,21 @@ do
 		save()
 		notify("Stats reset", "")
 	end)
+	local ui = section(settingsPage, "Interface", 2)
+	local row = new("Frame", { Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = C.bg }, ui)
+	round(row, 6) outline(row)
+	text(row, { Size = UDim2.new(1, -110, 1, 0), Position = UDim2.fromOffset(10, 0), Text = "UI size" })
+	local sizeL = text(row, { Size = UDim2.fromOffset(44, 20), Position = UDim2.new(1, -78, 0.5, -10), Text = "", Font = BOLD, TextXAlignment = Enum.TextXAlignment.Center })
+	local function setScale(d)
+		cfg.uiScale = math.clamp(math.floor((cfg.uiScale + d) * 10 + 0.5) / 10, 0.5, 1.5)
+		save()
+		if uiScale then uiScale.Scale = cfg.uiScale end
+		sizeL.Text = math.floor(cfg.uiScale * 100 + 0.5) .. "%"
+	end
+	smallButton(row, "−", nil, -104, function() setScale(-0.1) end)
+	smallButton(row, "+", nil, -30, function() setScale(0.1) end)
+	setScale(0)
+	hint(ui, "Smaller is better on phones (50–150%). Minimizing the window with – is remembered after reloads.")
 	local card2 = section(settingsPage, "Script", 3)
 	hint(card2, "RightControl shows/hides the window (change it in UI Settings). If Replay/Next teleports you, the macro reloads by itself.")
 	button(card2, "Unload macro", "danger", function() getgenv().TD_UNLOAD() end)
