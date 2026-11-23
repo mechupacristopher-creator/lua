@@ -1,4 +1,4 @@
-local VERSION = "1.8.0"
+local VERSION = "1.8.1"
 local CFG_FILE = "ssp_aim_cfg.json"
 
 local G = getgenv()
@@ -426,12 +426,28 @@ local function computeVolley(m)
 		if s and s.err < 0.8 then
 			s.curve = 0
 			s.target = Vector3.new(gx, c.y, c.z)
+			s.spot = m.spot
 			S.status = ("Volley -> %s %s corner%s"):format(c.y > 3 and "top" or "low",
 				(c.z > 0) == (gx > 0) and "left" or "right", keeper and " | keeper read" or "")
 			return s
 		end
 	end
-	S.status = "Volley: no corner reachable from this touch"
+
+	local kz = keeper and keeper:GetPivot().Position.Z or -m.spot.Z
+	local zs = { HALF_W - 3.2, -(HALF_W - 3.2), HALF_W - 5.5, -(HALF_W - 5.5), 0 }
+	table.sort(zs, function(a, b) return math.abs(a - kz) > math.abs(b - kz) end)
+	for _, z in ipairs(zs) do
+		for _, y in ipairs({ 4, BAR - 3, 1.6 }) do
+			local s = solve(m.spot, gx, z, y, launch)
+			if s and s.err < 0.8 then
+				s.curve, s.fallback, s.spot = 0, true, m.spot
+				s.target = Vector3.new(gx, y, z)
+				S.status = ("Volley -> safe spot z %.1f height %.1f%s"):format(z, y, s.rolled and " (rolling)" or "")
+				return s
+			end
+		end
+	end
+	S.status = "Volley: goal out of reach from this touch"
 	return nil
 end
 
@@ -736,7 +752,18 @@ table.insert(S.conns, RunService.Heartbeat:Connect(function(dt)
 		end
 		keeperStep(os.clock())
 		local okv, started = pcall(Volley.get)
-		if okv and started and S.vsol then S.volleyAt, S.volleySolUsed = os.clock(), S.vsol end
+		if okv and started and started ~= S.lastVolley then
+			S.lastVolley = started
+			if S.vsol and os.clock() - (S.vsolAt or 0) < 0.5 then
+				S.volleyAt, S.volleySolUsed = os.clock(), S.vsol
+				local v = S.vsol
+				logShot(("VOLLEY%s index %s target z %.1f y %.1f from x %.0f z %.0f y %.1f solveErr %.2f"):format(v.fallback and " (fallback spot)" or "",
+					tostring(started.meeting and started.meeting.index), v.target.Z, v.target.Y, v.spot and v.spot.X or 0, v.spot and v.spot.Z or 0, v.spot and v.spot.Y or 0, v.err or -1))
+			elseif cfg.volley then
+				logShot("VOLLEY NOT AIMED: " .. tostring(S.status))
+			end
+		end
+		if not (okv and started) then S.lastVolley = nil end
 		local bp = ballPos()
 		if bp and S.ballPrevPos and S.volleySolUsed and os.clock() - (S.volleyAt or 0) < 0.8 then
 			local vel = (bp - S.ballPrevPos) / math.max(dt, 1 / 240)
