@@ -1,4 +1,4 @@
-local VERSION = "1.4.2"
+local VERSION = "1.4.3"
 local CFG_FILE = "pg_hub_cfg.json"
 
 local G = getgenv()
@@ -26,7 +26,7 @@ local cfg = {
 	dribbleGlide = false, gatherGlide = false, shotGlide = false, glideSpeed = 14, dribbleGlideSpeed = 7,
 	ankle = false, ankleRange = 12, combo = "Crossover, Spin, StepBack", loopCombo = false,
 	block = false, blockRange = 15, blockDelay = 170, steal = false, stealRange = 6,
-	guard = false, guardHoldG = false, guardMode = "Tight", guardDist = 4, guardCreep = 25,
+	guard = false, guardHoldG = false, guardMode = "Tight", guardDist = 4, guardRange = 15,
 	selfLob = false, lobRange = 15,
 	fov = false, fovValue = 80, fullbright = false, noPost = false, antiAfk = false,
 }
@@ -306,11 +306,19 @@ conn(RunService.Stepped:Connect(function()
 			if bp then bp.Position = gTarget end
 			bv.Velocity = gVel
 		else
-			local cap = (ws + 3.35) * 1.3 * (cfg.speed and cfg.speedMult or 1)
-			local chase = off.Magnitude > 0.3 and off.Unit * math.min(off.Magnitude * 12, cap) or Vector3.zero
+			local cap = ws + 3.35
+			local chase = off.Magnitude > 0.3 and off.Unit * math.min(off.Magnitude * 6, cap) or Vector3.zero
 			local v = gVel + chase
 			if v.Magnitude > cap then v = v.Unit * cap end
+			if v.Magnitude > ws + 0.5 and not char:GetAttribute("Sprinting") and os.clock() - (S.guardSprintT or 0) > 0.5 then
+				S.guardSprintT = os.clock()
+				IS.Sprint:FireServer(true)
+			end
 			bv.Velocity = v
+			if off.Magnitude > 6 and os.clock() - (S.guardLogT or 0) > 1 then
+				S.guardLogT = os.clock()
+				dbg(string.format("GUARD %s gap %.1f studs, moving %.1f studs/s", gHandler.Name, off.Magnitude, v.Magnitude))
+			end
 		end
 		local gyro = Proxy:FindFirstChild("MovementGyro")
 		if gyro and (face - gTarget).Magnitude > 0.1 then gyro.CFrame = CFrame.new(gTarget, face) end
@@ -520,7 +528,7 @@ function S.computeGuard()
 	local me = myChar()
 	if not cfg.guard or not me or hasBall(me) then return nil end
 	local pos = Proxy.Position
-	local best, bd = nil, cfg.guardCreep
+	local best, bd = nil, cfg.guardRange
 	for _, c in ipairs(others()) do
 		if hasBall(c) then
 			local d = flatDist(c.HumanoidRootPart.Position, pos)
@@ -533,7 +541,13 @@ function S.computeGuard()
 	local prev = guardPrev[best]
 	local vel = Vector3.zero
 	if prev and now > prev.t then vel = ((hp - prev.pos) / (now - prev.t)) * Vector3.new(1, 0, 1) end
-	if prev and now - prev.t < 0.02 then vel = prev.vel else guardPrev[best] = { t = now, pos = hp, vel = vel } end
+	if vel.Magnitude > 25 then vel = vel.Unit * 25 end
+	if prev and now - prev.t < 0.02 then
+		vel = prev.vel
+	else
+		vel = prev and prev.vel:Lerp(vel, 0.35) or vel
+		guardPrev[best] = { t = now, pos = hp, vel = vel }
+	end
 	local lead = pingMs / 2000 + 0.05
 	local predicted = hp + vel * lead
 	local goal = nearestGoal(predicted)
@@ -710,8 +724,8 @@ toggle(gd, "Auto Guard", "guard")
 toggle(gd, "Auto Hold G", "guardHoldG")
 gd:Dropdown({ name = "Mode", items = { "Tight", "Blatant" }, default = cfg.guardMode, Callback = setCfg("guardMode") })
 slider(gd, "Distance (studs)", 2, 10, "guardDist")
-slider(gd, "Creep Distance (studs)", 10, 50, "guardCreep")
-gd:Label({ name = "Locks onto whoever has the ball, between them and the hoop. Tight moves at up to 1.3x sprint speed, Blatant snaps to them. Move yourself to take over. Pair with Auto Block: fakes are ignored." })
+slider(gd, "Guard Range (studs)", 6, 30, "guardRange")
+gd:Label({ name = "Locks onto whoever has the ball, between them and the hoop. Tight never goes faster than a normal sprint. Blatant snaps to them (risky). Move yourself to take over. Pair with Auto Block: fakes are ignored." })
 toggle(stl, "Auto Rebound", "magnet")
 slider(stl, "Rebound Range (studs)", 5, 80, "magnetRange")
 
