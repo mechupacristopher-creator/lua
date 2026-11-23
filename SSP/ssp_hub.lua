@@ -1,4 +1,4 @@
-local VERSION = "1.7.0"
+local VERSION = "1.8.0"
 local CFG_FILE = "ssp_aim_cfg.json"
 
 local G = getgenv()
@@ -76,6 +76,7 @@ local function fly(start, gx, yaw, pitch, launch, walls)
 	local p = math.rad(pitch)
 	local dir = Vector3.new(math.cos(yaw) * math.cos(p), math.sin(p), math.sin(yaw) * math.cos(p))
 	local v, spin = launch(dir)
+	local v0, s0 = v, spin
 	local pos, t = start, 0
 	local sx = math.sign(gx - start.X)
 	while t < 4 do
@@ -90,7 +91,12 @@ local function fly(start, gx, yaw, pitch, launch, walls)
 			local hit = pos + (np - pos) * a
 			return hit.Z, hit.Y, t + DT * a, dir
 		end
-		if np.Y <= 0 and v.Y < 0 then return nil end
+		if np.Y <= 0 and v.Y < 0 then
+
+			local ok, tt, hit = pcall(Keeper.plane, start, v0, s0, gx < 0 and Match.WEST or Match.EAST, 0)
+			if ok and tt and hit then return hit.Z, math.max(hit.Y, 0.8), tt, dir, true end
+			return nil
+		end
 		pos, t = np, t + DT
 	end
 	return nil
@@ -100,10 +106,18 @@ local function solve(start, gx, tz, ty, launch)
 	local yaw = math.atan2(tz - start.Z, gx - start.X)
 	local pitch, best = 0, nil
 	for _ = 1, 22 do
-		local z, y = fly(start, gx, yaw, pitch, launch)
+		local z, y, _, _, rolled = fly(start, gx, yaw, pitch, launch)
 		if not z then
 			pitch += 5
 			if pitch > 45 then return best end
+		elseif rolled and ty < 3 then
+			local ez = z - tz
+			local err = math.abs(ez)
+			if not best or err < best.err then best = { yaw = yaw, pitch = pitch, err = err, rolled = true } end
+			if err < 0.12 then break end
+			local z1 = fly(start, gx, yaw + 0.004, pitch, launch)
+			if not z1 or math.abs(z1 - z) < 1e-6 then break end
+			yaw -= math.clamp(ez / ((z1 - z) / 0.004), -0.25, 0.25)
 		else
 			local ez, ey = z - tz, y - ty
 			local err = math.sqrt(ez * ez + ey * ey)
@@ -302,9 +316,14 @@ local function corners(ball, gx, keeper, volley)
 	return list
 end
 
+local function logShot(line)
+	pcall(appendfile, "ssp_shotlog.txt", os.date("%H:%M:%S ") .. line .. string.char(10))
+end
+
 local function watchShot(sol, biasKey, label)
 	task.spawn(function()
 		local t0, prev = os.clock(), ballPos()
+		local crossed = false
 		while os.clock() - t0 < 4 and alive() do
 			task.wait()
 			local p = ballPos()
@@ -312,6 +331,9 @@ local function watchShot(sol, biasKey, label)
 				local a = (sol.target.X - prev.X) / (p.X - prev.X)
 				local hit = prev + (p - prev) * a
 				S.last = ("%s: target z %.1f y %.1f | crossed z %.1f y %.1f"):format(label, sol.target.Z, sol.target.Y, hit.Z, hit.Y)
+				crossed = true
+				local inGoal = math.abs(hit.Z) < HALF_W - 0.79 and hit.Y < BAR - 0.79
+				logShot(("  RESULT crossed z %.2f y %.2f (target z %.2f y %.2f, miss dz %.2f dy %.2f) %s"):format(hit.Z, hit.Y, sol.target.Z, sol.target.Y, hit.Z - sol.target.Z, hit.Y - sol.target.Y, inGoal and "IN" or "OUT/POST"))
 				local ey = hit.Y - sol.target.Y
 				local ez = math.abs(hit.Z) - math.abs(sol.target.Z)
 				if math.abs(ey) < 3 and math.abs(ez) < 4 then
@@ -323,6 +345,10 @@ local function watchShot(sol, biasKey, label)
 				return
 			end
 			prev = p
+		end
+		if not crossed then
+			local p = ballPos()
+			logShot(("  RESULT never reached the goal line (blocked, saved or wide) - ball last at %s"):format(p and ("x %.0f z %.0f y %.1f"):format(p.X, p.Z, p.Y) or "?"))
 		end
 	end)
 end
@@ -354,6 +380,8 @@ local function compute(force)
 		end
 		if found then
 			found.target = Vector3.new(gx, c.y, c.z)
+			found.power, found.from, found.leadFresh = power, from, lead ~= nil and lead ~= false
+			found.tplAge = S.fireAt and os.clock() - S.fireAt or nil
 			found.keeper = keeper ~= nil
 			found.charge = prog
 			S.status = ("Aiming %s %s corner | curve %+d | charge %d%%%s"):format(
@@ -362,7 +390,27 @@ local function compute(force)
 			return found
 		end
 	end
-	S.status = "Too weak to reach a corner - charge more"
+
+	local kz = keeper and keeper:GetPivot().Position.Z or -from.Z
+	local zs = { HALF_W - 3, -(HALF_W - 3), HALF_W - 5.5, -(HALF_W - 5.5), 0 }
+	table.sort(zs, function(a, b) return math.abs(a - kz) > math.abs(b - kz) end)
+	for _, z in ipairs(zs) do
+		for _, y in ipairs({ 1.6, 4 }) do
+			for _, cv in ipairs({ 0, 1, -1 }) do
+				local s = solve(from, gx, z, y, shotLaunch(cv, prog, power, force ~= nil))
+				if s and s.err < 0.8 then
+					s.curve = cv
+					s.target = Vector3.new(gx, y, z)
+					s.power, s.from, s.leadFresh = power, from, lead ~= nil and lead ~= false
+					s.tplAge = S.fireAt and os.clock() - S.fireAt or nil
+					s.keeper, s.charge, s.fallback = keeper ~= nil, prog, true
+					S.status = ("Aiming safe spot z %.1f%s | curve %+d | charge %d%%"):format(z, s.rolled and " (rolling)" or "", cv, prog * 100)
+					return s
+				end
+			end
+		end
+	end
+	S.status = "Too weak to reach the goal - charge more"
 	return nil
 end
 
@@ -746,8 +794,20 @@ table.insert(S.conns, RunService.Heartbeat:Connect(function(dt)
 			return
 		end
 	end
+	if charging then S.wasCharging = true end
 	if not (cfg.aim and charging) then
-		if S.sol then watchShot(S.sol, "SSPAimBias", "Last shot") end
+		if S.sol then
+			local sol = S.sol
+			logShot(("SHOT%s %s charge %d%% curve %+d target z %.1f y %.1f from x %.0f z %.0f (dist %.0f) solveErr %.2f lead %s tplAge %s curveMult %.2f bias y %.2f z %.2f"):format(
+				sol.fallback and " (fallback spot)" or (sol.rolled and " (rolling)" or ""), sol.power and "POWER" or "normal", (sol.charge or 0) * 100, sol.curve or 0, sol.target.Z, sol.target.Y,
+				sol.from and sol.from.X or 0, sol.from and sol.from.Z or 0, sol.from and math.abs(sol.target.X - sol.from.X) or 0, sol.err or -1,
+				tostring(sol.leadFresh), sol.tplAge and ("%.2f"):format(sol.tplAge) or "none", S.curveMult or 1,
+				(G.SSPAimBias or { y = 0 }).y, (G.SSPAimBias or { z = 0 }).z))
+			watchShot(sol, "SSPAimBias", "Last shot")
+		elseif S.wasCharging and cfg.aim then
+			logShot("SHOT NOT AIMED: " .. tostring(S.status))
+		end
+		S.wasCharging = false
 		S.sol = nil
 		marker.Transparency = 1
 		return
