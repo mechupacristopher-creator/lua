@@ -64,6 +64,21 @@ local function gameCall(f)
 	if ok then return r end
 end
 
+local function press(signal, only)
+	local ok, conns = pcall(function() return getconnections and getconnections(signal) end)
+	if ok and type(conns) == "table" and #conns > 0 then
+		for _, c in ipairs(conns) do
+			local f = c.Function
+			if not only or (f and only(f)) then
+				gameCall(function() if f then f() else c:Fire() end end)
+			end
+		end
+		return true
+	end
+	if firesignal then return gameCall(function() firesignal(signal) return true end) == true end
+	return false
+end
+
 local function inMatch() return G.serverType == "Match" end
 local function gameStarted() return gameCall(function() return G.root.roundStats.gameStarted end) end
 
@@ -636,32 +651,21 @@ local function abilityTick()
 	end
 end
 
-local function pathsOf(cls) return gameCall(function() return type(cls.UpgradePaths) == "table" and #cls.UpgradePaths > 0 and cls.UpgradePaths or nil end) end
-local pathTried, lastPathCheck = {}, 0
+local pathOpen, lastPathPress = nil, 0
 local function pathTick()
-	if not cfg.autoPath or os.clock() - lastPathCheck < 1 then return end
-	lastPathCheck = os.clock()
-	local ents = findEntities() or {}
-	for eid, e in pairs(myTowers()) do
-		local cls = not e.SelectedPath and gameCall(function() return G.Item:FromId(e.classId) end)
-		local paths = cls and pathsOf(cls)
-		if paths and os.clock() - (pathTried[eid] or 0) > 3 then
-			local function taken(i)
-				if not paths[i].IsUnique then return false end
-				for oid, o in pairs(ents) do
-					if type(o) == "table" and tostring(oid) ~= eid and o.classId == e.classId and o.SelectedPath == i then return true end
-				end
-				return false
-			end
-			local want = cfg["path_" .. unitName(cls)] or 1
-			local pick = (paths[want] and not taken(want)) and want or nil
-			if not pick then for i in ipairs(paths) do if not taken(i) then pick = i break end end end
-			local cost = pick and gameCall(function() return e:GetNextUpgradeCost(pick) end)
-			if pick and type(cost) == "number" and cash() >= cost then
-				pathTried[eid] = os.clock()
-				fire("PlayerUpgradeTower", eid, pick)
-			end
-		end
+	if not cfg.autoPath then return end
+	local sel = gameCall(function() return G.mainGui:FindFirstChild("UpgradePathSelection", true) end)
+	if not (sel and sel.Visible) then pathOpen = nil return end
+	if os.clock() - lastPathPress < 1.5 then return end
+	lastPathPress = os.clock()
+	pathOpen = (pathOpen or 0) + 1
+	local want = cfg.pathPick or 1
+	local pick = pathOpen % 2 == 1 and want or (want == 1 and 2 or 1)
+	local frame = sel:FindFirstChild("Frame")
+	local b = frame and frame:FindFirstChild(tostring(pick))
+	if b and b.Visible then
+		press(b.Activated)
+		if pathOpen <= 2 then notify("Path", "Picked Path " .. pick) end
 	end
 end
 
@@ -749,10 +753,7 @@ local function dragoAutoTick()
 		local b = slot:FindFirstChild("Button") and slot.Button:FindFirstChild("ToggleAuto")
 		local bg = b and b.Visible and b:FindFirstChild("Background")
 		if bg and bg.BackgroundColor3.G < 0.5 then
-			for _, c in ipairs(getconnections(b.Activated)) do
-				local f = c.Function
-				if f and tostring(debug.getinfo(f).source):find("ClientTowerManager") then gameCall(f) end
-			end
+			press(b.Activated, function(f) return tostring(debug.getinfo(f).source):find("ClientTowerManager") ~= nil end)
 		end
 	end
 end
@@ -933,7 +934,7 @@ if mainFrame then
 	if minBtn then
 
 		if cfg.minimized then
-			for _, c in ipairs(getconnections(minBtn.MouseButton1Click)) do pcall(function() c:Fire() end) end
+			press(minBtn.MouseButton1Click)
 		end
 		bind(minBtn.MouseButton1Click:Connect(function() cfg.minimized = not cfg.minimized save() end))
 	end
@@ -1104,23 +1105,10 @@ local function buildUnits()
 	end
 	button(card, "↻  Reload units", "normal", buildUnits)
 
-	local pathCard
-	for _, t in ipairs(equipped()) do
-		local paths = pathsOf(t.Class)
-		if paths then
-			if not pathCard then
-				pathCard = section(unitsPage, "Unit paths", 3)
-				toggle(pathCard, "Auto pick path", "Picks the path below on the first upgrade; if it's a unique path someone else took, uses another", "autoPath")
-			end
-			local name = unitName(t)
-			local key = "path_" .. name
-			cfg[key] = cfg[key] or 1
-			local opts = {}
-			for i, p in ipairs(paths) do opts[i] = { i, tostring(p.DisplayName or ("Path " .. i)) .. (p.IsUnique and " ★" or "") } end
-			segmented(pathCard, name, nil, key, opts)
-		end
-	end
-	if pathCard then hint(pathCard, "★ = unique: only one per match.") end
+	local pathCard = section(unitsPage, "Unit paths", 3)
+	toggle(pathCard, "Auto pick path", "For units with paths (Bomb Girl, Krumi, Claudius…), placed or ghost", "autoPath")
+	cfg.pathPick = cfg.pathPick or 1
+	segmented(pathCard, "Path", "If another player already has a unique path, the other one is used.", "pathPick", { { 1, "①  Path 1" }, { 2, "②  Path 2" } })
 end
 buildUnits()
 
