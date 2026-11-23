@@ -25,7 +25,7 @@ Toggle the panel with **RightControl**.
 - Combos: type moves (e.g. `Crossover, Spin, StepBack`), play them with a key or button, optional loop
 
 **Defense**
-- Auto Guard: locks onto whoever has the ball and mirrors their movement between them and the hoop (Tight or Blatant mode, distance, creep distance, auto hold G)
+- Auto Guard: plays full-court defense by moving your player like the keyboard would (walks and sprints, no teleporting), stays between the ball handler and the hoop and predicts their moves and dribbles; press any movement key to take over
 - Auto Block (range and delay): only jumps on real shots, pump fakes are ignored
 - Auto Steal, Auto Rebound
 

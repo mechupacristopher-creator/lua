@@ -1,4 +1,4 @@
-local VERSION = "1.4.3"
+local VERSION = "1.5.1"
 local CFG_FILE = "pg_hub_cfg.json"
 
 local G = getgenv()
@@ -26,7 +26,7 @@ local cfg = {
 	dribbleGlide = false, gatherGlide = false, shotGlide = false, glideSpeed = 14, dribbleGlideSpeed = 7,
 	ankle = false, ankleRange = 12, combo = "Crossover, Spin, StepBack", loopCombo = false,
 	block = false, blockRange = 15, blockDelay = 170, steal = false, stealRange = 6,
-	guard = false, guardHoldG = false, guardMode = "Tight", guardDist = 4, guardRange = 15,
+	guard = false, guardHoldG = false, guardDist = 4, guardReach = 100,
 	selfLob = false, lobRange = 15,
 	fov = false, fovValue = 80, fullbright = false, noPost = false, antiAfk = false,
 }
@@ -114,7 +114,7 @@ local function calKey(meterType, speed)
 end
 
 local function leadMs(meterType, speed)
-	return readPing() * 0.4 + cfg.timingMs + (cfg.meterCal3[calKey(meterType, speed)] or 0)
+	return readPing() * 0.5 - 6 + cfg.timingMs + (cfg.meterCal3[calKey(meterType, speed)] or 0)
 end
 S.leadMs = leadMs
 
@@ -257,8 +257,20 @@ local controls
 pcall(function() controls = require(LP.PlayerScripts:WaitForChild("PlayerModule")):GetControls() end)
 if setthreadidentity then pcall(setthreadidentity, 8) end
 
+local origGMV, ownGMV
+if controls then
+	ownGMV = rawget(controls, "GetMoveVector")
+	origGMV = controls.GetMoveVector
+	controls.GetMoveVector = function(self, ...)
+		local real = origGMV(self, ...)
+		local H = G.PGHub
+		if real.Magnitude > 0.05 or not H or not H.guardMove then return real end
+		return H.guardMove
+	end
+end
+
 local function moveInput()
-	local mv = controls and controls:GetMoveVector() or Vector3.zero
+	local mv = origGMV and origGMV(controls) or Vector3.zero
 	if mv.Magnitude < 0.1 then return nil end
 	local look = Camera.CFrame.LookVector * Vector3.new(1, 0, 1)
 	local right = Camera.CFrame.RightVector * Vector3.new(1, 0, 1)
@@ -270,6 +282,7 @@ end
 local GLIDE = { Dribbling = "dribbleGlide", Gathering = "gatherGlide", Shooting = "shotGlide" }
 local rush = nil
 conn(RunService.Stepped:Connect(function()
+	S.guardMove = nil
 	local bv = Proxy:FindFirstChild("MovementVelocity")
 	if not bv then return end
 	if rush then
@@ -299,30 +312,30 @@ conn(RunService.Stepped:Connect(function()
 	S.guardTarget = gTarget
 	if gTarget and not moveInput() then
 		local off = (gTarget - Proxy.Position) * Vector3.new(1, 0, 1)
-		local face = gHandler.HumanoidRootPart.Position * Vector3.new(1, 0, 1) + Vector3.new(0, gTarget.Y, 0)
-		if cfg.guardMode == "Blatant" then
-			Proxy.CFrame = CFrame.new(gTarget, face)
-			local bp = Proxy:FindFirstChild("BodyPosition")
-			if bp then bp.Position = gTarget end
-			bv.Velocity = gVel
+		local dist = off.Magnitude
+		local look = Camera.CFrame.LookVector * Vector3.new(1, 0, 1)
+		local right = Camera.CFrame.RightVector * Vector3.new(1, 0, 1)
+		if dist > 0.6 and look.Magnitude > 0.01 then
+			local dir = off.Unit
+			local mag = math.clamp(dist / 3, 0.35, 1)
+			S.guardMove = Vector3.new(dir:Dot(right.Unit), 0, -dir:Dot(look.Unit)) * mag
 		else
-			local cap = ws + 3.35
-			local chase = off.Magnitude > 0.3 and off.Unit * math.min(off.Magnitude * 6, cap) or Vector3.zero
-			local v = gVel + chase
-			if v.Magnitude > cap then v = v.Unit * cap end
-			if v.Magnitude > ws + 0.5 and not char:GetAttribute("Sprinting") and os.clock() - (S.guardSprintT or 0) > 0.5 then
+			S.guardMove = Vector3.zero
+		end
+		local sprinting = char:GetAttribute("Sprinting")
+		if os.clock() - (S.guardSprintT or 0) > 0.4 then
+			if dist > 5 and not sprinting then
 				S.guardSprintT = os.clock()
 				IS.Sprint:FireServer(true)
-			end
-			bv.Velocity = v
-			if off.Magnitude > 6 and os.clock() - (S.guardLogT or 0) > 1 then
-				S.guardLogT = os.clock()
-				dbg(string.format("GUARD %s gap %.1f studs, moving %.1f studs/s", gHandler.Name, off.Magnitude, v.Magnitude))
+			elseif dist < 2 and sprinting and not sprintHeld and not cfg.alwaysSprint then
+				S.guardSprintT = os.clock()
+				IS.Sprint:FireServer(false)
 			end
 		end
-		local gyro = Proxy:FindFirstChild("MovementGyro")
-		if gyro and (face - gTarget).Magnitude > 0.1 then gyro.CFrame = CFrame.new(gTarget, face) end
-		return
+		if dist > 8 and os.clock() - (S.guardLogT or 0) > 1 then
+			S.guardLogT = os.clock()
+			dbg(string.format("GUARD %s (%s) gap %.1f studs", gHandler.Name, tostring(A(gHandler, "Action")), dist))
+		end
 	end
 	local mult = cfg.speed and cfg.speedMult or 1
 	if cfg.infStamina and (sprintHeld or cfg.alwaysSprint) and (char:GetAttribute("Stamina") or 100) <= 0.25 and ws > 0 then
@@ -528,7 +541,7 @@ function S.computeGuard()
 	local me = myChar()
 	if not cfg.guard or not me or hasBall(me) then return nil end
 	local pos = Proxy.Position
-	local best, bd = nil, cfg.guardRange
+	local best, bd = nil, cfg.guardReach
 	for _, c in ipairs(others()) do
 		if hasBall(c) then
 			local d = flatDist(c.HumanoidRootPart.Position, pos)
@@ -548,7 +561,7 @@ function S.computeGuard()
 		vel = prev and prev.vel:Lerp(vel, 0.35) or vel
 		guardPrev[best] = { t = now, pos = hp, vel = vel }
 	end
-	local lead = pingMs / 2000 + 0.05
+	local lead = pingMs / 2000 + ((A(best, "Action") == "Dribbling") and 0.3 or 0.12)
 	local predicted = hp + vel * lead
 	local goal = nearestGoal(predicted)
 	if not goal then return nil end
@@ -722,10 +735,9 @@ slider(stl, "Steal Range (studs)", 3, 12, "stealRange")
 local gd = defTab:Section({ name = "Auto Guard", side = "left" })
 toggle(gd, "Auto Guard", "guard")
 toggle(gd, "Auto Hold G", "guardHoldG")
-gd:Dropdown({ name = "Mode", items = { "Tight", "Blatant" }, default = cfg.guardMode, Callback = setCfg("guardMode") })
 slider(gd, "Distance (studs)", 2, 10, "guardDist")
-slider(gd, "Guard Range (studs)", 6, 30, "guardRange")
-gd:Label({ name = "Locks onto whoever has the ball, between them and the hoop. Tight never goes faster than a normal sprint. Blatant snaps to them (risky). Move yourself to take over. Pair with Auto Block: fakes are ignored." })
+slider(gd, "Guard Range (studs)", 10, 120, "guardReach")
+gd:Label({ name = "Plays defense for you on the whole court: walks and sprints your player like the keyboard would, staying between the ball handler and the hoop and predicting their moves. Press any movement key to take over. Pair with Auto Block: fakes are ignored." })
 toggle(stl, "Auto Rebound", "magnet")
 slider(stl, "Rebound Range (studs)", 5, 80, "magnetRange")
 
@@ -749,6 +761,7 @@ actions:Button({ name = "Unload Script", Callback = function() S.Unload() end })
 
 function S.Unload()
 	if G.PGHub == S then G.PGHub = nil end
+	if controls then rawset(controls, "GetMoveVector", ownGMV) end
 	for _, c in ipairs(S.conns) do pcall(function() c:Disconnect() end) end
 	cfg.fullbright, cfg.noPost = false, false
 	pcall(setHoldG, false)
