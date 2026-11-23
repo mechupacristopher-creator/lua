@@ -1,4 +1,4 @@
-local VERSION = "1.5.1"
+local VERSION = "1.5.2"
 local CFG_FILE = "pg_hub_cfg.json"
 
 local G = getgenv()
@@ -26,7 +26,7 @@ local cfg = {
 	dribbleGlide = false, gatherGlide = false, shotGlide = false, glideSpeed = 14, dribbleGlideSpeed = 7,
 	ankle = false, ankleRange = 12, combo = "Crossover, Spin, StepBack", loopCombo = false,
 	block = false, blockRange = 15, blockDelay = 170, steal = false, stealRange = 6,
-	guard = false, guardHoldG = false, guardDist = 4, guardReach = 100,
+	guard = false, guardHoldG = false, guardGap = 6, guardReach = 100,
 	selfLob = false, lobRange = 15,
 	fov = false, fovValue = 80, fullbright = false, noPost = false, antiAfk = false,
 }
@@ -315,9 +315,16 @@ conn(RunService.Stepped:Connect(function()
 		local dist = off.Magnitude
 		local look = Camera.CFrame.LookVector * Vector3.new(1, 0, 1)
 		local right = Camera.CFrame.RightVector * Vector3.new(1, 0, 1)
-		if dist > 0.6 and look.Magnitude > 0.01 then
-			local dir = off.Unit
-			local mag = math.clamp(dist / 3, 0.35, 1)
+		local hp = gHandler.HumanoidRootPart.Position
+		local fromHandler = (Proxy.Position - hp) * Vector3.new(1, 0, 1)
+		local dir, mag
+		if fromHandler.Magnitude < cfg.guardGap * 0.7 then
+			local back = (gTarget - hp) * Vector3.new(1, 0, 1)
+			if back.Magnitude > 0.1 then dir, mag = back.Unit, 1 end
+		elseif dist > 1.2 then
+			dir, mag = off.Unit, math.clamp(dist / 3, 0.35, 1)
+		end
+		if dir and look.Magnitude > 0.01 then
 			S.guardMove = Vector3.new(dir:Dot(right.Unit), 0, -dir:Dot(look.Unit)) * mag
 		else
 			S.guardMove = Vector3.zero
@@ -567,7 +574,7 @@ function S.computeGuard()
 	if not goal then return nil end
 	local toGoal = (goal.Position - predicted) * Vector3.new(1, 0, 1)
 	if toGoal.Magnitude < 0.1 then return nil end
-	local target = Vector3.new(predicted.X, pos.Y, predicted.Z) + toGoal.Unit * math.min(cfg.guardDist, toGoal.Magnitude)
+	local target = Vector3.new(predicted.X, pos.Y, predicted.Z) + toGoal.Unit * math.min(cfg.guardGap, toGoal.Magnitude)
 	return target, best, vel
 end
 
@@ -735,7 +742,7 @@ slider(stl, "Steal Range (studs)", 3, 12, "stealRange")
 local gd = defTab:Section({ name = "Auto Guard", side = "left" })
 toggle(gd, "Auto Guard", "guard")
 toggle(gd, "Auto Hold G", "guardHoldG")
-slider(gd, "Distance (studs)", 2, 10, "guardDist")
+slider(gd, "Gap (studs)", 3, 12, "guardGap")
 slider(gd, "Guard Range (studs)", 10, 120, "guardReach")
 gd:Label({ name = "Plays defense for you on the whole court: walks and sprints your player like the keyboard would, staying between the ball handler and the hoop and predicting their moves. Press any movement key to take over. Pair with Auto Block: fakes are ignored." })
 toggle(stl, "Auto Rebound", "magnet")
