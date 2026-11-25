@@ -92,7 +92,7 @@ local function fire(name, ...) local args = { ... } gameCall(function() G.FireNe
 local function equipped() return gameCall(function() return G.data:GetEquippedTowers() end) or {} end
 
 local function slotOf(id)
-	for i, t in pairs(equipped()) do if t.id == id then return i end end
+	for i, t in pairs(equipped()) do if t and t.id == id then return i end end
 end
 local function stepTower(s) return s.slot and equipped()[s.slot] end
 
@@ -352,7 +352,7 @@ end
 local function placementQueue()
 	local first, rest = {}, {}
 	for _, t in ipairs(equipped()) do
-		if unitCfg(t).on and not isDragon(t) then
+		if t and unitCfg(t).on and not isDragon(t) then
 			if costs(t)[1] == cfg.firstUnitCost then table.insert(first, t) else table.insert(rest, t) end
 		end
 	end
@@ -613,8 +613,9 @@ end
 local function dragonTick()
 	local golden, shenron
 	for _, t in pairs(equipped()) do
-		local name = tostring(gameCall(function() return t.Name end))
-		if name == "GoldenDrago" then golden = t elseif tostring(t.id):find("Shenron") then shenron = t end
+		local name = t and tostring(gameCall(function() return t.Name end))
+		if not t then
+		elseif name == "GoldenDrago" then golden = t elseif tostring(t.id):find("Shenron") then shenron = t end
 	end
 	if cfg.autoShenron and shenron and countPlaced(shenron.id) == 0 and cash() >= (costs(shenron)[1] or 250000) then
 		local mine = {}
@@ -1115,7 +1116,7 @@ local function buildUnits()
 	toggle(autoCard, "Auto ability", "Turns on auto ability for every tower that has one", "autoAbility")
 	local card = section(unitsPage, "Equipped units", 2)
 	hint(card, "The $" .. cfg.firstUnitCost .. " unit goes first, then cheapest to most expensive.")
-	for _, t in ipairs(equipped()) do
+	for _, t in ipairs(equipped()) do if t then
 		local u, limit = unitCfg(t), limitOf(t)
 		local row = new("Frame", { Size = UDim2.new(1, 0, 0, 38), BackgroundColor3 = C.bg }, card)
 		round(row, 8) outline(row)
@@ -1137,14 +1138,14 @@ local function buildUnits()
 		bind(minus.Activated:Connect(function() u.cap = math.max(0, math.min(u.cap, limit) - 1) save() end))
 		bind(plus.Activated:Connect(function() u.cap = math.min(limit, u.cap + 1) save() end))
 		unitRows[t.id] = { capL = capL, u = u, limit = limit }
-	end
+	end end
 	button(card, "↻  Reload units", "normal", buildUnits)
 
 	local pathCard = section(unitsPage, "Unit paths", 3)
 	toggle(pathCard, "Auto pick path", "For units with paths (Bomb Girl, Krumi, Claudius…), placed or ghost", "autoPath")
 	local any = false
 	for _, t in ipairs(equipped()) do
-		if pathsOf(t.Class) then
+		if t and pathsOf(t.Class) then
 			any = true
 			local key = "path_" .. unitName(t)
 			cfg[key] = cfg[key] or cfg.pathPick or 1
