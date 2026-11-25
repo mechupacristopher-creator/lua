@@ -17,6 +17,8 @@ local LP = Players.LocalPlayer
 local Remotes = RS:WaitForChild("VBRemotes")
 local InputR = Remotes:WaitForChild("Input")
 local IC = require(RS:WaitForChild("VBClient"):WaitForChild("InputCtl"))
+local Config = require(RS:WaitForChild("VB"):WaitForChild("Config"))
+local BallMath = require(RS.VB:WaitForChild("BallMath"))
 
 local cfg = { silentAim = false, aimServe = true, lineInset = 0.3, coverRadius = 7, curve = true, curveWidth = 10, curveBack = 12, autoSpike = false, minCloseness = 0.6 }
 pcall(function() for k, v in pairs(Http:JSONDecode(readfile(CFG_FILE))) do if cfg[k] ~= nil then cfg[k] = v end end end)
@@ -111,7 +113,7 @@ conn(RunService.Heartbeat:Connect(function()
 	pcall(computeSpot)
 	local dir, root = faceDir()
 	S.dir = dir
-	if IC.GetMode and IC.GetMode() ~= "ground" and not IC.Serving then
+	if IC.GetMode and IC.GetMode() ~= "ground" and not (IC.Serving and not IC.Tossed) then
 		if dir then
 			IC._airFacingXZ = dir
 			root.CFrame = CFrame.lookAt(root.Position, root.Position + dir)
@@ -120,23 +122,54 @@ conn(RunService.Heartbeat:Connect(function()
 end))
 
 local swung, peak = false, 0
+local function swing()
+	swung = true
+	S.autoSwings += 1
+	task.spawn(function()
+		IC.PrimaryDown()
+		task.wait()
+		IC.PrimaryUp()
+	end)
+end
+
 conn(RunService.Heartbeat:Connect(function()
-	if not cfg.autoSpike or not IC.Enabled or IC.Serving then return end
+	if not cfg.autoSpike or not IC.Enabled then return end
 	local mode = IC.GetMode and IC.GetMode()
-	if mode ~= "air" then swung, peak = false, 0 return end
+	if mode ~= "air" and mode ~= "serveAir" and mode ~= "serveToss" then swung, peak = false, 0 return end
 	if swung then return end
 	local ok, bi = pcall(IC.BallInfo)
-	if not ok or type(bi) ~= "table" or not bi.live then return end
-	local close = tonumber(bi.reticleCloseness) or 0
-	if bi.reticleIdeal == true or (peak >= cfg.minCloseness and close < peak - 0.04) then
-		swung = true
-		S.autoSwings += 1
-		task.spawn(function()
-			IC.PrimaryDown()
-			task.wait()
-			IC.PrimaryUp()
-		end)
+	if not ok or type(bi) ~= "table" then return end
+	if mode == "serveToss" then
+		local char = LP.Character
+		local root = char and char:FindFirstChild("HumanoidRootPart")
+		local traj = bi.traj or IC._lastTossTraj
+		if not root or not traj or not IC.Tossed then return end
+		local mods = Config.ComputeTraitModifiers(char) or {}
+		local reach, _, _, ideal = Config.GetServeReachBounds(mods, IC.Match and IC.Match.mode, IC.DeviceMode == "touch", IC.DeviceMode == "gamepad")
+		local now = workspace:GetServerTimeNow()
+		local rel = BallMath.PosAt(traj, now) - root.Position
+		local nxt = BallMath.PosAt(traj, now + 1 / 30) - root.Position
+		local flat = Vector3.new(rel.X, 0, rel.Z).Magnitude
+		local off, nextOff = math.abs(rel.Y - ideal), math.abs(nxt.Y - ideal)
+		if flat <= reach * 0.85 and off <= 1.1 and (nextOff >= off or nextOff > 1.1) then swing() end
+		return
 	end
+	local close = tonumber(bi.reticleCloseness) or 0
+	local ready = bi.reticleIdeal == true or (peak >= cfg.minCloseness and close < peak - 0.04)
+	if mode == "serveAir" then
+		local root = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+		local traj = bi.traj or IC._lastTossTraj
+		if not root or not traj then return end
+		local H = Config.Hit
+		local now = workspace:GetServerTimeNow()
+		local function inReach(t)
+			local r = BallMath.PosAt(traj, t) - root.Position
+			return Vector3.new(r.X, 0, r.Z).Magnitude <= H.JumpServeReachH and r.Y >= H.JumpServeLow and r.Y <= H.JumpServeHigh
+		end
+		if not inReach(now) then return end
+		ready = ready or not inReach(now + 1 / 30)
+	end
+	if ready then swing() end
 	if close > peak then peak = close end
 end))
 
@@ -148,7 +181,7 @@ oldNC = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
 		local verb, vec, opts = ...
 		local spot = S.spot
 		if cfg.silentAim and spot and typeof(vec) == "Vector3" and (AIM_VERBS[verb] or (cfg.aimServe and verb == "bump" and IC.Serving and IC.Tossed)) then
-			if type(opts) == "table" and S.dir and not IC.Serving then opts.airFaceXZ = S.dir end
+			if type(opts) == "table" and S.dir and verb ~= "bump" then opts.airFaceXZ = S.dir end
 			if verb == "spike" or verb == "bump" then
 				S.aimed += 1
 				if cfg.curve and type(opts) == "table" and not opts.dumpSpike and S.curveFrom then opts.curveFrom = S.curveFrom end
@@ -200,7 +233,7 @@ sa:Slider({ name = "Curve Width", min = 2, max = 20, default = cfg.curveWidth, d
 sa:Label({ name = "Bends the ball out around the antenna and back into the target. Needs the Curve trait equipped." })
 local st = atk:Section({ name = "Status", side = "right" })
 toggle(st, "Auto Spike Timing", "autoSpike")
-st:Label({ name = "Jump as usual. The hub swings at the best contact point so spikes don't go short or turn into tips." })
+st:Label({ name = "Jump as usual. The hub swings at the best contact point for spikes and serves. For serves, just toss." })
 st:Slider({ name = "Min Contact Quality", min = 0.2, max = 1, default = cfg.minCloseness, decimals = 2, Callback = setCfg("minCloseness") })
 liveLabel(st, function() return "Target: " .. S.lastSpot end)
 liveLabel(st, function() return "Last ball landed: " .. S.lastLand end)

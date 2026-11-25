@@ -16,7 +16,7 @@ Toggle the panel with **RightControl**.
 - Silent Aim: every spike goes to the deep corner on your side, then the other corner; if both are covered it hits the open part of the white line
 - Curve Into Corners: bends the ball out around the antenna and back into the target (needs the Curve trait)
 - Aim Serves Too
-- Auto Spike Timing: jump as usual, the hub swings at the best contact point
+- Auto Spike Timing: jump as usual, the hub swings at the best contact point; also hits your serves (just toss)
 - Line Inset, Corner Covered Radius, Curve Width and Min Contact Quality sliders
 
 ## Notes
