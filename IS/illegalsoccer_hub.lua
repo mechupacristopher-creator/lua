@@ -39,6 +39,7 @@ local cfg = {
 	autoDribble = false, dribbleRange = 14,
 	reach = false, reachDist = 4.5,
 	tackleAssist = false, tackleRange = 20,
+	flickAssist = false, flickReach = 10,
 }
 pcall(function() for k, v in pairs(Http:JSONDecode(readfile(CFG_FILE))) do if cfg[k] ~= nil then cfg[k] = v end end end)
 cfg.speed, cfg.gkSpeed = math.clamp(cfg.speed, 1, 3), math.clamp(cfg.gkSpeed, 1, 3)
@@ -247,24 +248,44 @@ local function simCross(char, start, cam, aim, curve, secs, vel0, bw, target, n,
 		local p = s and s.Position
 		if not p then break end
 		local d = (p - target):Dot(n)
-		if d <= 0 then return prev:Lerp(p, pd / (pd - d)), true end
+		if d <= 0 then return prev:Lerp(p, pd / (pd - d)), true, vel end
 		if d < closestD then closest, closestD = p, d end
 		prev, pd = p, d
 	end
-	return closest, false
+	return closest, false, vel
 end
 
-local function solvePlan(secsOverride)
-	local origin = shotOrigin()
-	if not origin then return end
-	local target, cornerVec, n = aimTarget(origin)
-	if not target then return end
+local function shotStart(origin)
 	local char = LP.Character
 	local start = origin
 	if S.startFn and S.charging then
 		local ok, p = pcall(S.startFn, char)
 		if ok and typeof(p) == "Vector3" then start = p end
 	end
+	local kind = shotKind()
+	if kind == "volley" or kind == "bicycle" then
+		local okV, contact = pcall(function()
+			local st = Renderer.GetMovementState()
+			if type(st) ~= "table" then return nil end
+			local arr = S.chargeObj and S.chargeObj.GetVolleyArrivalTime and S.chargeObj.GetVolleyArrivalTime()
+			arr = arr or st.VolleyArriveAt
+			local now = workspace:GetServerTimeNow()
+			if type(arr) ~= "number" or arr - now < 0.05 then return Renderer.GetPosition() end
+			local at = Physics.GetStateAtTime(st, arr, ChargePathPreview.GetChargeBoundaryWorld(LP))
+			return at and at.Position
+		end)
+		if okV and typeof(contact) == "Vector3" then start = contact end
+	end
+	return start, kind
+end
+
+local function solvePlan(secsOverride, startOverride)
+	local origin = shotOrigin()
+	if not origin then return end
+	local target, cornerVec, n = aimTarget(origin)
+	if not target then return end
+	local char = LP.Character
+	local start = startOverride or shotStart(origin)
 	local baseRay = S.lastRay
 	local cam = baseRay and typeof(baseRay.Origin) == "Vector3" and baseRay.Origin or workspace.CurrentCamera.CFrame.Position
 	local secs, vel0 = secsOverride or chargeSeconds(), reportedVelocity()
@@ -290,14 +311,14 @@ local function solvePlan(secsOverride)
 			for _ = 1, 8 do
 				if budget <= 0 then break end
 				budget -= 1
-				local hit, crossed = simCross(char, start, cam, aim, curve, secs, vel0, bw, target, n, baseRay)
+				local hit, crossed, launchVel = simCross(char, start, cam, aim, curve, secs, vel0, bw, target, n, baseRay)
 				if not hit then break end
 				local e3 = target - hit
 				e3 = e3 - n * e3:Dot(n)
 				local e = toPlane(e3)
 				local err = crossed and e.Magnitude or math.huge
 				if not best or err < best.err then
-					best = { aim = aim, curve = curve, target = target, n = n, origin = start, err = err, cam = cam, kind = kind, scale = scale }
+					best = { aim = aim, curve = curve, target = target, n = n, origin = start, err = err, cam = cam, kind = kind, scale = scale, vel = launchVel, secs = secs }
 				end
 				if err < 0.4 then break end
 				if prevAim and crossed then
@@ -331,8 +352,18 @@ end
 local planCache, planAt = nil, 0
 local function getPlan(fresh, secs)
 	if not (cfg.silentAim or cfg.aimbot) then return nil end
-	if fresh or os.clock() - planAt > 0.1 then
-		local ok, p = pcall(solvePlan, secs)
+	local curSecs = secs or chargeSeconds()
+	local age = os.clock() - planAt
+	local need = fresh or not planCache or age > 0.1
+	if not need and planCache.secs and math.abs(planCache.secs - curSecs) > 0.015 then need = true end
+	local curStart
+	if not need and not secs then
+		local origin = shotOrigin()
+		curStart = origin and shotStart(origin)
+		if curStart and planCache.origin and (curStart - planCache.origin).Magnitude > 0.5 then need = true end
+	end
+	if need then
+		local ok, p = pcall(solvePlan, curSecs, curStart)
 		planCache, planAt = ok and p or nil, os.clock()
 		if S.setClientCurve then S.setClientCurve(planCache and planCache.curve or 0) end
 	end
@@ -448,8 +479,12 @@ local function rewrite(cmd, phase)
 	if not isShotCommand(cmd) then return end
 	local plan
 	if phase == "Release" then
-		local stale = os.clock() - planAt > 0.25
-		plan = getPlan(stale, type(cmd.ChargeSeconds) == "number" and cmd.ChargeSeconds or nil)
+		local secs = type(cmd.ChargeSeconds) == "number" and cmd.ChargeSeconds or nil
+		if planCache and os.clock() - planAt < 0.25 and (not secs or not planCache.secs or math.abs(planCache.secs - secs) <= 0.015) then
+			plan = planCache
+		else
+			plan = getPlan(true, secs)
+		end
 	else
 		plan = getPlan()
 	end
@@ -463,6 +498,18 @@ local function rewrite(cmd, phase)
 	if phase == "Release" then
 		S.aimed += 1
 		watchShot(plan.origin, plan.target, plan.n, cmd.Curve)
+		local relAt = workspace:GetServerTimeNow()
+		task.spawn(function()
+			for _ = 1, 90 do
+				task.wait()
+				local st = Renderer.GetMovementState()
+				if type(st) == "table" and st.StartedAt and st.StartedAt >= relAt - 0.3 and typeof(st.InitialVelocity) == "Vector3" and st.InitialVelocity.Magnitude > 5 then
+					logLine(string.format("  debug %s err %.2f secs %.2f | predicted start %s vel %s | server start %s vel %s | cmd secs %s", tostring(plan.kind), plan.err, plan.secs or -1, tostring(plan.origin), tostring(plan.vel), tostring(st.InitialPosition), tostring(st.InitialVelocity), tostring(cmd.ChargeSeconds)))
+					return
+				end
+			end
+			logLine("  debug: no launch seen, kind " .. tostring(plan.kind))
+		end)
 	end
 end
 
@@ -470,6 +517,7 @@ for _, name in ipairs({ "Start", "Update", "LockAim", "Release", "Send" }) do
 	patch(Proto, name, function(orig)
 		return function(cmd, ...)
 			if alive() then
+				if type(cmd) == "table" and cmd.Kind == Cmds.Kinds.RainbowFlick then S.flickUntil, S.flickSnapped = os.clock() + 2.2, false logLine(os.date("%H:%M:%S ") .. "flick detected (" .. name .. ")") end
 				pcall(rewrite, cmd, name)
 				if isShotCommand(cmd) then
 					if name == "Start" then S.charging = true elseif name == "Release" then S.charging = false end
@@ -606,6 +654,51 @@ patch(SlideInput, "HandleInputBegan", function(orig)
 	end
 end)
 
+S.flickUntil = 0
+S.flickSnapped = false
+S.flicks = 0
+local FLICK_BIND = "EzeISFlickAssist"
+local function flickContact(root)
+	local st = Renderer.GetMovementState()
+	if type(st) ~= "table" or st.Mode ~= "Airborne" then return end
+	local bw = ChargePathPreview.GetChargeBoundaryWorld(LP)
+	local now = workspace:GetServerTimeNow()
+	local s = st
+	local hipY = root.Position.Y
+	for i = 1, 45 do
+		s = Physics.GetStateAtTime(s, now + i * 0.04, bw)
+		if not s then return end
+		if s.Velocity.Y < 0 and s.Position.Y <= hipY + 1.5 then return s.Position, i * 0.04 end
+	end
+end
+RunService:BindToRenderStep(FLICK_BIND, Enum.RenderPriority.Input.Value + 1, function()
+	if not cfg.flickAssist or os.clock() > S.flickUntil then return end
+	local owner = Renderer.GetOwnedUserId()
+	if owner ~= nil and owner ~= LP.UserId then S.flickUntil = 0 return end
+	local root, char = myRoot()
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if not root or not hum then return end
+	local ok, target, tContact = pcall(flickContact, root)
+	if not ok or not target then return end
+	local d = Vector3.new(target.X - root.Position.X, 0, target.Z - root.Position.Z)
+	local dist = d.Magnitude
+	if dist > 1 then hum:Move(d.Unit, false) end
+	local hs = hum:GetState()
+	local airborne = hum.FloorMaterial == Enum.Material.Air or hs == Enum.HumanoidStateType.Jumping or hs == Enum.HumanoidStateType.Freefall
+	if airborne and not S.flickSnapped and tContact <= 0.35 and dist > 2 and dist <= cfg.flickReach then
+		S.flickSnapped = true
+		S.flicks += 1
+		logLine(os.date("%H:%M:%S ") .. string.format("flick reach: moved %.1f studs, contact in %.2fs", dist, tContact))
+		pcall(AEScript.SetAttribute, AEScript, "LocalAntiExploitEnabled", false)
+		local spot = Vector3.new(target.X, root.Position.Y, target.Z) - d.Unit * 1.5
+		root.CFrame = CFrame.new(spot) * root.CFrame.Rotation
+		task.delay(0.6, function()
+			if alive() and not cfg.reach then pcall(AEScript.SetAttribute, AEScript, "LocalAntiExploitEnabled", true) end
+		end)
+	end
+end)
+table.insert(S.restore, function() pcall(RunService.UnbindFromRenderStep, RunService, FLICK_BIND) end)
+
 local function setGuard()
 	pcall(AEScript.SetAttribute, AEScript, "LocalAntiExploitEnabled", not (cfg.reach and alive()))
 end
@@ -702,10 +795,13 @@ bl:Label({ name = "Dribbles the moment an opponent slide tackles toward you whil
 toggle(bl, "Extended Ball Reach", "reach", setGuard)
 bl:Slider({ name = "Reach Distance", min = 3, max = 5, default = cfg.reachDist, decimals = 1, Callback = setCfg("reachDist") })
 bl:Label({ name = "Steps you up to 2 studs onto loose balls (once per second). The server decides who gets the ball, so this moves you instead of growing a hitbox. Can cause small pullbacks." })
+toggle(bl, "Flick Volley Assist", "flickAssist")
+bl:Slider({ name = "Flick Reach", min = 3, max = 16, default = cfg.flickReach, decimals = 1, Callback = setCfg("flickReach") })
+bl:Label({ name = "After a flick, runs you toward where the ball drops and, just before it comes down, puts you right under it (up to Flick Reach studs) so the volley is in range. Only fires while both you and the ball are in the air. Big values can cause pullbacks." })
 toggle(bl, "Tackle Reach Assist", "tackleAssist")
 bl:Slider({ name = "Tackle Range", min = 8, max = 23, default = cfg.tackleRange, decimals = 1, Callback = setCfg("tackleRange") })
 bl:Label({ name = "When you slide, it steers the slide at where the ball carrier will be, so tackles connect from the slide's full reach. The server checks slide length and hitbox, so those can't be made bigger." })
-liveLabel(bl, function() return "Dribbles: " .. S.dribbles .. "  |  Reaches: " .. S.reaches .. "  |  Assisted tackles: " .. S.tackles end)
+liveLabel(bl, function() return "Dribbles: " .. S.dribbles .. "  |  Reaches: " .. S.reaches .. "  |  Assisted tackles: " .. S.tackles .. "  |  Flick reaches: " .. S.flicks end)
 
 local miscTab = win:Tab({ name = "Misc", icon = "lucide:info" })
 local actions = miscTab:Section({ name = "Script", side = "left" })

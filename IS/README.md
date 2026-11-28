@@ -23,6 +23,7 @@ Toggle the panel with **RightControl**.
 - Walkspeed with separate multipliers for field player and goalkeeper (up to 3x; 1.5x had no pullbacks in testing, 2x about one per 40s)
 - Auto Dribble: dribbles the moment an opponent slide tackles toward you while you have the ball
 - Tackle Reach Assist: steers your slide at where the ball carrier will be, so tackles connect from the slide's full reach
+- Flick Volley Assist: after a flick, moves you under the falling ball (up to Flick Reach studs, only while you and the ball are in the air) so the volley is in range
 - Extended Ball Reach: steps you up to 2 studs onto loose balls
 
 ## Notes
